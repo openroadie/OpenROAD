@@ -557,7 +557,18 @@ protected:
   RepairHold *repair_hold_;
   SteinerRenderer *steiner_renderer_;
 
+  // TODO HARSH
+  // So this stuff needs to get enhanced.
+  // because of the way the existing structure is set up, it is not clear
+  // how we can average out multiple X or Y layers. Using 1 layer is pretty
+  // straightforward.
+  // Can to just duplicate this for X and Y: probably not 
   // Layer RC per wire length indexed by layer->getNumber(), corner->index
+  // Right now we are allowed to specify different layers for signals
+  // and clocks: Which is something which I guess we can preserve
+  // The units Ohms/meter and Farads/meter are for a unit length of wire but
+  // they do not account for the thickness of wire nor do they account for
+  // X and Y direction routing. 
   vector<vector<double>> layer_res_; // ohms/meter
   vector<vector<double>> layer_cap_; // Farads/meter
   // Signal wire RC indexed by corner->index

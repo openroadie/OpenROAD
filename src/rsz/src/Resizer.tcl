@@ -125,11 +125,12 @@ proc set_layer_rc {args} {
 }
 
 sta::define_cmd_args "set_wire_rc" {[-clock] [-signal]\
-                                      [-layer layer_name]\
-                                      [-resistance res]\
-                                      [-capacitance cap]\
-                                      [-corner corner]}
+					[-layer layer_name]\
+					[-resistance res]\
+					[-capacitance cap]\
+					[-corner corner]}
 
+# TODO HARSH
 proc set_wire_rc { args } {
   sta::parse_key_args "set_wire_rc" args \
     keys {-layer -resistance -capacitance -corner} \

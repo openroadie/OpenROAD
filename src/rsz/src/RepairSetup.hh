@@ -99,6 +99,8 @@ private:
   void debugCheckMultipleBuffers(PathRef &path,
                                  PathExpanded *expanded);
 
+  bool generatePairedBufferReport(PathRef *drvr_path, int drvr_index,
+                                  PathExpanded *expanded);
   void getEquivPortList2(sta::FuncExpr *expr, sta::LibertyPortSet &ports,
                          sta::FuncExpr::Operator &status);
   void getEquivPortList(sta::FuncExpr *expr, sta::LibertyPortSet &ports);
@@ -151,6 +153,7 @@ private:
   int inserted_buffer_count_;
   int rebuffer_net_count_;
   int swap_pin_count_;
+  std::unordered_map<const sta::Instance *, int> swap_pin_inst_map_;
   const MinMax *min_;
   const MinMax *max_;
 

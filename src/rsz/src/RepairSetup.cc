@@ -360,12 +360,16 @@ RepairSetup::repairSetup(PathRef &path,
         break;
       }
 
+      // Debug code
+      generatePairedBufferReport(drvr_path, drvr_index, &expanded);
+
       if (!skip_pin_swap) {
         if (swapPins(drvr_path, drvr_index, &expanded)) {
           changed = true;
           break;
         }
       }
+
 
       // For tristate nets all we can do is resize the driver.
       bool tristate_drvr = resizer_->isTristateDriver(drvr_pin);
@@ -420,6 +424,78 @@ void RepairSetup::debugCheckMultipleBuffers(PathRef &path,
     printf("done\n");
 }
 
+bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
+                                             int drvr_index,
+                                             PathExpanded *expanded)
+{
+    //size_t size = expanded->size();
+    /* The algorithm is as follows
+     * Go through the timing path from the end to the beginning
+     * For each element find the cell that is driving it
+     * Then push the cell into a vector. If the cell is already in the vector
+     * then we have found a pair of buffers
+     * If the cell is not a buffer then we have to stash this and move on
+     */
+/*
+ *  This is the real stuff for instances etc etc...
+ *  Pin *drvr_pin = drvr_path->pin(this);
+    Instance *drvr = network_->instance(drvr_pin);
+    const DcalcAnalysisPt *dcalc_ap = drvr_path->dcalcAnalysisPt(sta_);
+    // int lib_ap = dcalc_ap->libertyIndex(); : check cornerPort
+    float load_cap = graph_delay_calc_->loadCap(drvr_pin, dcalc_ap);
+    int in_index = drvr_index - 1;
+    PathRef *in_path = expanded->path(in_index);
+    Pin *in_pin = in_path->pin(sta_);
+ */
+    int count = expanded->size();//startPrevArc();
+    LibertyPort *in = nullptr;
+    LibertyPort *out = nullptr;
+    LibertyCell *cell = nullptr;
+    bool have_buffer = false;
+    printf("1XXXXQAAAAA The path has %d elements\n", count);
+
+    vector<vector<LibertyCell *>> buffer_chains;
+    vector<LibertyCell *> buffer_chain;
+
+    for (int i= (int)(count-1); i > 0; --i) {
+        //PathRef *path(size_t index);
+        TimingArc * arc = expanded->prevArc(i);
+
+        if (arc != nullptr) {
+          in = arc->from();
+          out = arc->to();
+        }
+        if (in != nullptr) {
+            cell = in->libertyCell();
+        }
+        if (cell == nullptr && out != nullptr) {
+            cell = out->libertyCell();
+        }
+        if (cell != nullptr) {
+            if (cell->isBuffer()) {
+                if (!have_buffer) {
+                  buffer_chain.push_back(cell);
+                  have_buffer = true;
+                }
+                else {
+                  buffer_chain.push_back(cell);
+                }
+            }
+            else {
+                if (buffer_chain.size() > 1) {
+                  printf("Found a chain of length %lu\n", buffer_chain.size());
+                  buffer_chains.push_back(buffer_chain);
+                }
+                buffer_chain.clear();
+                have_buffer = false;
+            }
+        }
+
+    }
+    printf("2XXXXQAAAAA The path has %d elements\n", count);
+    return false;
+}
+
 bool RepairSetup::swapPins(PathRef *drvr_path,
                            int drvr_index,
                            PathExpanded *expanded)
@@ -433,8 +509,7 @@ bool RepairSetup::swapPins(PathRef *drvr_path,
     PathRef *in_path = expanded->path(in_index);
     Pin *in_pin = in_path->pin(sta_);
 
-    // Very bad hack.
-    static std::unordered_map<const Instance *, int> instance_set;
+    swap_pin_inst_map_.clear();
 
     if (!resizer_->dontTouch(drvr)) {
         // We get the driver port and the cell for that port.
@@ -460,14 +535,14 @@ bool RepairSetup::swapPins(PathRef *drvr_path,
 
         // Check if we have already dealt with this instance more than twice.
         // Skip if the answeris a yes.
-        if (instance_set.find(drvr) == instance_set.end()) {
-            instance_set.insert(std::make_pair(drvr,1));
+        if (swap_pin_inst_map_.find(drvr) == swap_pin_inst_map_.end()) {
+            swap_pin_inst_map_.insert(std::make_pair(drvr,1));
         }
         else {
             // If the candidate shows up twice then it is marginal and we should
             // just stop considering it.
-            if (instance_set[drvr] == 1) {
-                instance_set[drvr] = 2;
+            if (swap_pin_inst_map_[drvr] == 1) {
+                swap_pin_inst_map_[drvr] = 2;
                 --swap_pin_count_;
             }
             else

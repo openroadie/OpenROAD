@@ -355,6 +355,7 @@ protected:
   bool isTristateDriver(const Pin *pin);
   void makeEquivCells();
   void findBuffers();
+  void findInverters();
   bool isLinkCell(LibertyCell *cell);
   void findTargetLoads();
   float findTargetLoad(LibertyCell *cell);
@@ -591,6 +592,12 @@ protected:
   double design_area_;
   const MinMax *min_;
   const MinMax *max_;
+  // counterpoint to buffer_cells_ and buffer_lowest_drive_
+  // used to replace pairs of buffers. At some point we may want to directly
+  // use inverters instead of this two step operation.
+  LibertyCellSeq inverter_cells_;
+  LibertyCell *inverter_lowest_drive_;
+
   LibertyCellSeq buffer_cells_;
   LibertyCell *buffer_lowest_drive_;
 

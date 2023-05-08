@@ -33,6 +33,7 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
+#include <tuple>
 #include "RepairSetup.hh"
 #include "rsz/Resizer.hh"
 
@@ -362,6 +363,7 @@ RepairSetup::repairSetup(PathRef &path,
 
       // Debug code
       generatePairedBufferReport(drvr_path, drvr_index, &expanded);
+      logicCloningFun(drvr_path, drvr_index, &expanded);
 
       if (!skip_pin_swap) {
         if (swapPins(drvr_path, drvr_index, &expanded)) {
@@ -424,6 +426,15 @@ void RepairSetup::debugCheckMultipleBuffers(PathRef &path,
     printf("done\n");
 }
 
+bool RepairSetup::logicCloningFun(PathRef *drvr_path,
+                                   int drvr_index,
+                                   PathExpanded *expanded)
+{
+  printf("HAHAHAHAHA\n");
+  // First step is to find nets that have high fanout
+  return false;
+}
+
 bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
                                              int drvr_index,
                                              PathExpanded *expanded)
@@ -436,17 +447,10 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
      * then we have found a pair of buffers
      * If the cell is not a buffer then we have to stash this and move on
      */
-/*
- *  This is the real stuff for instances etc etc...
- *  Pin *drvr_pin = drvr_path->pin(this);
-    Instance *drvr = network_->instance(drvr_pin);
-    const DcalcAnalysisPt *dcalc_ap = drvr_path->dcalcAnalysisPt(sta_);
-    // int lib_ap = dcalc_ap->libertyIndex(); : check cornerPort
-    float load_cap = graph_delay_calc_->loadCap(drvr_pin, dcalc_ap);
-    int in_index = drvr_index - 1;
-    PathRef *in_path = expanded->path(in_index);
-    Pin *in_pin = in_path->pin(sta_);
- */
+
+    PathRef *path;
+    Pin *pin;
+    Instance *drvr;
     int count = expanded->size();//startPrevArc();
     LibertyPort *in = nullptr;
     LibertyPort *out = nullptr;
@@ -454,11 +458,13 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
     bool have_buffer = false;
     printf("1XXXXQAAAAA The path has %d elements\n", count);
 
-    vector<vector<LibertyCell *>> buffer_chains;
-    vector<LibertyCell *> buffer_chain;
+    vector<vector<std::tuple<LibertyCell *, Instance *>>> buffer_chains;
+    vector<std::tuple<LibertyCell *, Instance *>> buffer_chain;
 
-    for (int i= (int)(count-1); i > 0; --i) {
-        //PathRef *path(size_t index);
+    for (int i= drvr_index; i > 0; --i) {
+        path = expanded->path(i);
+        pin = path->pin(this->sta_);
+        drvr = network_->instance(pin);
         TimingArc * arc = expanded->prevArc(i);
 
         if (arc != nullptr) {
@@ -474,11 +480,11 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
         if (cell != nullptr) {
             if (cell->isBuffer()) {
                 if (!have_buffer) {
-                  buffer_chain.push_back(cell);
+                  buffer_chain.push_back(std::make_tuple(cell, drvr));
                   have_buffer = true;
                 }
                 else {
-                  buffer_chain.push_back(cell);
+                  buffer_chain.push_back(std::make_tuple(cell, drvr));
                 }
             }
             else {
@@ -490,8 +496,8 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
                 have_buffer = false;
             }
         }
-
     }
+
     printf("2XXXXQAAAAA The path has %d elements\n", count);
     return false;
 }

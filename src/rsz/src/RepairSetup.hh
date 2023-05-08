@@ -96,11 +96,16 @@ private:
   bool repairSetup(PathRef &path,
                    Slack path_slack,
                    bool skip_pin_swap);
+
+  //============================================================================
+  // All the experimental code not ready for production
   void debugCheckMultipleBuffers(PathRef &path,
                                  PathExpanded *expanded);
-
   bool generatePairedBufferReport(PathRef *drvr_path, int drvr_index,
                                   PathExpanded *expanded);
+  bool logicCloningFun(PathRef *drvr_path, int drvr_index,
+                               PathExpanded *expanded);
+  //============================================================================
   void getEquivPortList2(sta::FuncExpr *expr, sta::LibertyPortSet &ports,
                          sta::FuncExpr::Operator &status);
   void getEquivPortList(sta::FuncExpr *expr, sta::LibertyPortSet &ports);

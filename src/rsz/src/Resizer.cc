@@ -404,6 +404,34 @@ Resizer::ensureLevelDrvrVertices()
   }
 }
 
+void Resizer::findInverters()
+{
+  inverter_cells_ = buffer_cells_; // FIXME: shut up the compiler for now.
+  if (inverter_cells_.empty()) {
+    LibertyLibraryIterator* lib_iter = network_->libertyLibraryIterator();
+    while (lib_iter->hasNext()) {
+      LibertyLibrary* lib = lib_iter->next();
+      for (LibertyCell* inverter : *lib->buffers()) {
+        if (!dontUse(inverter) && isLinkCell(inverter)) {
+          inverter_cells_.push_back(inverter);
+        }
+      }
+    }
+    delete lib_iter;
+
+    if (inverter_cells_.empty())
+      logger_->error(RSZ, 23, "no inverters found.");
+    else {
+      sort(inverter_cells_,
+           [this](const LibertyCell* inverter1, const LibertyCell* inverter2) {
+             return bufferDriveResistance(inverter1)
+                    > bufferDriveResistance(inverter2);
+           });
+      inverter_lowest_drive_ = inverter_cells_[0];
+    }
+  }
+}
+
 ////////////////////////////////////////////////////////////////
 
 void
@@ -890,7 +918,6 @@ Resizer::swapPins(Instance *inst, LibertyPort *port1,
 
     Pin *found_pin1, *found_pin2;
     Net *net1, *net2;
-
     InstancePinIterator *pin_iter = network_->pinIterator(inst);
     found_pin1 = found_pin2 = nullptr;
     net1 = net2 = nullptr;

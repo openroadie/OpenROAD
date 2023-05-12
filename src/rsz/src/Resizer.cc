@@ -406,7 +406,6 @@ Resizer::ensureLevelDrvrVertices()
 
 void Resizer::findInverters()
 {
-  inverter_cells_ = buffer_cells_; // FIXME: shut up the compiler for now.
   if (inverter_cells_.empty()) {
     LibertyLibraryIterator* lib_iter = network_->libertyLibraryIterator();
     while (lib_iter->hasNext()) {

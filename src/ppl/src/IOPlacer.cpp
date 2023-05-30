@@ -362,8 +362,36 @@ int IOPlacer::placeFallbackPins(bool random)
                 group.first.size());
           }
 
+          int mid_slot = (last_slot - first_slot) / 2 - group.first.size() / 2
+                         + first_slot;
+
+          // try to place fallback group in the middle of the edge
           int place_slot = getFirstSlotToPlaceGroup(
-              first_slot, last_slot, group.first.size(), have_mirrored, io_pin);
+              mid_slot, last_slot, group.first.size(), have_mirrored, io_pin);
+
+          // if the previous fails, try to place the fallback group from the
+          // beginning of the edge
+          if (place_slot == -1) {
+            place_slot = getFirstSlotToPlaceGroup(first_slot,
+                                                  last_slot,
+                                                  group.first.size(),
+                                                  have_mirrored,
+                                                  io_pin);
+          }
+
+          if (place_slot == -1) {
+            Interval& interval = constraint.interval;
+            logger_->error(PPL,
+                           93,
+                           "Pin group of size {} does not fit in the "
+                           "constrained region {:.2f}-{:.2f} at {} edge. "
+                           "First pin of the group is {}.",
+                           group.first.size(),
+                           dbuToMicrons(interval.getBegin()),
+                           dbuToMicrons(interval.getEnd()),
+                           getEdgeString(interval.getEdge()),
+                           io_pin.getName());
+          }
 
           placeFallbackGroup(group, place_slot);
           break;
@@ -434,6 +462,15 @@ int IOPlacer::getSlotIdxByPosition(const odb::Point& position,
     }
   }
 
+  if (slot_idx == -1) {
+    logger_->error(utl::PPL,
+                   101,
+                   "Slot for position ({}, {}) in layer {} not found",
+                   position.getX(),
+                   position.getY(),
+                   layer);
+  }
+
   return slot_idx;
 }
 
@@ -479,14 +516,13 @@ int IOPlacer::getFirstSlotToPlaceGroup(int first_slot,
   }
 
   if (max_contiguous_slots < group_size) {
-    logger_->error(PPL,
-                   93,
-                   "Pin group of size {} does not fit in the die boundaries. "
-                   "First pin of the group is {}."
-                   "The max contiguous slots is {}.",
-                   group_size,
-                   first_pin.getName(),
-                   max_contiguous_slots);
+    logger_->warn(
+        PPL,
+        97,
+        "The max contiguous slots ({}) is smaller than the group size ({}).",
+        max_contiguous_slots,
+        group_size);
+    return -1;
   }
 
   return place_slot;
@@ -496,13 +532,19 @@ void IOPlacer::placeFallbackGroup(
     const std::pair<std::vector<int>, bool>& group,
     int place_slot)
 {
-  for (int pin_idx : group.first) {
+  auto edge = slots_[place_slot].edge;
+  const bool reverse = edge == Edge::top || edge == Edge::left;
+  const int group_last = group.first.size() - 1;
+
+  for (int i = 0; i <= group_last; ++i) {
+    const int pin_idx = group.first[reverse ? group_last - i : i];
     IOPin& io_pin = netlist_io_pins_->getIoPin(pin_idx);
-    io_pin.setPos(slots_[place_slot].pos);
-    io_pin.setLayer(slots_[place_slot].layer);
+    Slot& slot = slots_[place_slot];
+    io_pin.setPos(slot.pos);
+    io_pin.setLayer(slot.layer);
     assignment_.push_back(io_pin);
-    slots_[place_slot].used = true;
-    slots_[place_slot].blocked = true;
+    slot.used = true;
+    slot.blocked = true;
     place_slot++;
     if (mirrored_pins_.find(io_pin.getBTerm()) != mirrored_pins_.end()) {
       assignMirroredPins(io_pin, mirrored_pins_, assignment_);
@@ -1051,6 +1093,7 @@ int IOPlacer::assignGroupToSection(const std::vector<int>& io_group,
                     group_size);
     }
     if (!group_assigned) {
+      addGroupToFallback(io_group, order);
       logger_->warn(PPL, 42, "Unsuccessfully assigned I/O groups.");
     }
   }
@@ -1785,6 +1828,7 @@ void IOPlacer::run(bool random_mode)
         mirrored_pins_cnt = 0;
       }
     }
+    constrained_pins_cnt += placeFallbackPins(false);
 
     setupSections(constrained_pins_cnt);
     findPinAssignment(sections_, false);

@@ -115,22 +115,6 @@ std::string::const_iterator FindNotDelim(std::string::const_iterator start,
   return start;
 }
 
-std::vector<float> ConvertTclListToVector(std::string tcl_list_string)
-{
-  std::vector<float> values;
-  std::string deliminators(",{} ");  // empty space , } {
-  auto start = tcl_list_string.cbegin();
-  while (start != tcl_list_string.end()) {
-    start = FindNotDelim(start, tcl_list_string.end(), deliminators);
-    auto end = FindDelim(start, tcl_list_string.end(), deliminators);
-    if (start != tcl_list_string.end()) {
-      values.push_back(std::stof(std::string(start, end)));
-      start = end;
-    }
-  }
-  return values;
-}
-
 // Split a string based on deliminator : empty space and ","
 std::vector<std::string> SplitLine(const std::string& line)
 {
@@ -284,7 +268,7 @@ bool operator==(const std::vector<float>& a, const std::vector<float>& b)
   return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
 }
 
-bool operator<=(const MATRIX<float>& a, const MATRIX<float>& b)
+bool operator<=(const Matrix<float>& a, const Matrix<float>& b)
 {
   const int num_dim
       = std::min(static_cast<int>(a.size()), static_cast<int>(b.size()));
@@ -340,11 +324,11 @@ bool ILPPartitionInst(
     int vertex_weight_dimension,
     std::vector<int>& solution,
     const std::map<int, int>& fixed_vertices,  // vertex_id, block_id
-    const MATRIX<int>& hyperedges,
+    const Matrix<int>& hyperedges,
     const std::vector<float>& hyperedge_weights,  // one-dimensional
-    const MATRIX<float>& vertex_weights,          // two-dimensional
-    const MATRIX<float>& upper_block_balance,
-    const MATRIX<float>& lower_block_balance)
+    const Matrix<float>& vertex_weights,          // two-dimensional
+    const Matrix<float>& upper_block_balance,
+    const Matrix<float>& lower_block_balance)
 {
   const int num_vertices = static_cast<int>(vertex_weights.size());
   const int num_hyperedges = static_cast<int>(hyperedge_weights.size());
@@ -487,11 +471,11 @@ bool OptimalPartCplex(
     int vertex_weight_dimension,
     std::vector<int>& solution,
     const std::map<int, int>& fixed_vertices,     // vertex_id, block_id
-    const MATRIX<int>& hyperedges,                // hyperedges
+    const Matrix<int>& hyperedges,                // hyperedges
     const std::vector<float>& hyperedge_weights,  // one-dimensional
-    const MATRIX<float>& vertex_weights,          // two-dimensional
-    const MATRIX<float>& upper_block_balance,
-    const MATRIX<float>& lower_block_balance)
+    const Matrix<float>& vertex_weights,          // two-dimensional
+    const Matrix<float>& upper_block_balance,
+    const Matrix<float>& lower_block_balance)
 {
   const int num_vertices = static_cast<int>(vertex_weights.size());
   const int num_hyperedges = static_cast<int>(hyperedge_weights.size());

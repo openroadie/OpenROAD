@@ -44,11 +44,11 @@
 #include <set>
 #include <string>
 
-#include "TPCoarsener.h"
-#include "TPHypergraph.h"
-#include "TPMultilevel.h"
-#include "TPPartitioner.h"
-#include "TPRefiner.h"
+#include "Coarsener.h"
+#include "Hypergraph.h"
+#include "Multilevel.h"
+#include "Partitioner.h"
+#include "Refiner.h"
 #include "Utilities.h"
 #include "odb/db.h"
 #include "sta/ArcDelayCalc.hh"
@@ -83,6 +83,131 @@ namespace par {
 // Public functions
 // -----------------------------------------------------------------------------------
 
+TritonPart::TritonPart(ord::dbNetwork* network,
+                       odb::dbDatabase* db,
+                       sta::dbSta* sta,
+                       utl::Logger* logger)
+    : network_(network), db_(db), sta_(sta), logger_(logger)
+{
+}
+
+void TritonPart::SetTimingParams(float net_timing_factor,
+                                 float path_timing_factor,
+                                 float path_snaking_factor,
+                                 float timing_exp_factor,
+                                 float extra_delay,
+                                 bool guardband_flag)
+{
+  // the timing weight for cutting a hyperedge
+  net_timing_factor_ = net_timing_factor;
+
+  // the cost for cutting a critical timing path once. If a critical
+  // path is cut by 3 times, the cost is defined as 3 *
+  // path_timing_factor_
+  path_timing_factor_ = path_timing_factor;
+
+  // the cost of introducing a snaking timing path, see our paper for
+  // detailed explanation of snaking timing paths
+  path_snaking_factor_ = path_snaking_factor;
+
+  timing_exp_factor_ = timing_exp_factor;  // exponential factor
+  extra_delay_ = extra_delay;              // extra delay introduced by cut
+  guardband_flag_ = guardband_flag;        // timing guardband_flag
+}
+
+void TritonPart::SetFineTuneParams(
+    // coarsening related parameters
+    int thr_coarsen_hyperedge_size_skip,
+    int thr_coarsen_vertices,
+    int thr_coarsen_hyperedges,
+    float coarsening_ratio,
+    int max_coarsen_iters,
+    float adj_diff_ratio,
+    int min_num_vertices_each_part,
+    // initial partitioning related parameters
+    int num_initial_solutions,
+    int num_best_initial_solutions,
+    // refinement related parameters
+    int refiner_iters,
+    int max_moves,
+    float early_stop_ratio,
+    int total_corking_passes,
+    // vcycle related parameters
+    bool v_cycle_flag,
+    int max_num_vcycle,
+    int num_coarsen_solutions,
+    int num_vertices_threshold_ilp,
+    int global_net_threshold)
+{
+  // coarsening related parameters (stop conditions)
+
+  // if the size of a hyperedge is larger than
+  // thr_coarsen_hyperedge_size_skip_, then we ignore this hyperedge
+  // during coarsening
+  thr_coarsen_hyperedge_size_skip_ = thr_coarsen_hyperedge_size_skip;
+
+  // the minimum threshold of number of vertices in the coarsest
+  // hypergraph
+  thr_coarsen_vertices_ = thr_coarsen_vertices;
+
+  // the minimum threshold of number of hyperedges in the coarsest
+  // hypergraph
+  thr_coarsen_hyperedges_ = thr_coarsen_hyperedges;
+
+  // the ratio of number of vertices of adjacent coarse hypergraphs
+  coarsening_ratio_ = coarsening_ratio;
+
+  // maxinum number of coarsening iterations
+  max_coarsen_iters_ = max_coarsen_iters;
+
+  // the ratio of number of vertices of adjacent coarse hypergraphs if
+  // the ratio is less than adj_diff_ratio_, then stop coarsening
+  adj_diff_ratio_ = adj_diff_ratio;
+
+  // minimum number of vertices in each block for the partitioning
+  // solution of the coareset hypergraph We achieve this by
+  // controlling the maximum vertex weight during coarsening
+  min_num_vertices_each_part_ = min_num_vertices_each_part;
+
+  // initial partitioning related parameters
+
+  // number of initial random solutions generated
+  num_initial_solutions_ = num_initial_solutions;
+
+  // number of best initial solutions used for stability
+  num_best_initial_solutions_ = num_best_initial_solutions;
+
+  // refinement related parameter
+
+  refiner_iters_ = refiner_iters;  // refinement iterations
+
+  // the allowed moves for each pass of FM or greedy refinement or the
+  // number of vertices in an ILP instance
+  max_moves_ = max_moves;
+
+  // If the number of moved vertices exceeds
+  // num_vertices_of_a_hypergraph times early_stop_ratio_, then exit
+  // current FM pass.  This parameter is set based on the obersvation
+  // that in a FM pass, most of the gains are achieved by first
+  // several moves
+  early_stop_ratio_ = early_stop_ratio;
+
+  // the maximum level of traversing the buckets to solve the "corking
+  // effect"
+  total_corking_passes_ = total_corking_passes;
+
+  // V-cycle related parameters
+  v_cycle_flag_ = v_cycle_flag;
+  max_num_vcycle_ = max_num_vcycle;  // maximum number of vcycles
+  num_coarsen_solutions_ = num_coarsen_solutions;
+
+  // ILP threshold
+  num_vertices_threshold_ilp_ = num_vertices_threshold_ilp;
+
+  // global net threshold
+  global_net_threshold_ = global_net_threshold;
+}
+
 // The function for partitioning a hypergraph
 // This is used for replacing hMETIS
 // Key supports:
@@ -107,7 +232,7 @@ void TritonPart::PartitionHypergraph(unsigned int num_parts_arg,
   logger_->report("========================================");
   logger_->report("[STATUS] Starting TritonPart Partitioner");
   logger_->report("========================================");
-  logger_->report("[INFO] Partitioning parameters**** ");
+  logger_->info(PAR, 167, "Partitioning parameters**** ");
   // Parameters
   num_parts_ = num_parts_arg;
   ub_factor_ = balance_constraint_arg;
@@ -150,9 +275,10 @@ void TritonPart::PartitionHypergraph(unsigned int num_parts_arg,
   srand(seed_);  // set the random seed
 
   timing_aware_flag_ = false;
-  logger_->report(
-      "[WARNING] Reset the timing_aware_flag to false. Timing-driven mode is "
-      "not supported");
+  logger_->warn(PAR,
+                119,
+                "Reset the timing_aware_flag to false. Timing-driven mode is "
+                "not supported");
 
   // build hypergraph: read the basic hypergraph information and other
   // constraints
@@ -204,7 +330,7 @@ void TritonPart::PartitionDesign(unsigned int num_parts_arg,
   logger_->report("========================================");
   logger_->report("[STATUS] Starting TritonPart Partitioner");
   logger_->report("========================================");
-  logger_->report("[INFO] Partitioning parameters**** ");
+  logger_->info(PAR, 168, "[INFO] Partitioning parameters**** ");
   const int dbu = db_->getTech()->getDbUnitsPerMicron();
   block_ = db_->getChip()->getBlock();
   // Parameters
@@ -375,7 +501,7 @@ void TritonPart::EvaluateHypergraphSolution(unsigned int num_parts_arg,
   logger_->report("========================================");
   logger_->report("[STATUS] Starting Evaluating Hypergraph Solution");
   logger_->report("========================================");
-  logger_->report("[INFO] Partitioning parameters**** ");
+  logger_->info(PAR, 169, "Partitioning parameters**** ");
   // Parameters
   num_parts_ = num_parts_arg;
   ub_factor_ = balance_constraint_arg;
@@ -430,9 +556,10 @@ void TritonPart::EvaluateHypergraphSolution(unsigned int num_parts_arg,
   srand(seed_);  // set the random seed
 
   timing_aware_flag_ = false;
-  logger_->report(
-      "[WARNING] Reset the timing_aware_flag to false. Timing-driven mode is "
-      "not supported");
+  logger_->warn(PAR,
+                120,
+                "Reset the timing_aware_flag to false. Timing-driven mode is "
+                "not supported");
 
   // build hypergraph: read the basic hypergraph information and other
   // constraints
@@ -441,9 +568,10 @@ void TritonPart::EvaluateHypergraphSolution(unsigned int num_parts_arg,
 
   // check the weighting scheme
   if (static_cast<int>(e_wt_factors_.size()) != hyperedge_dimensions_) {
-    logger_->report(
-        "[WARNING] no hyperedge weighting is specified. Use default value of "
-        "1.");
+    logger_->warn(
+        PAR,
+        121,
+        "no hyperedge weighting is specified. Use default value of 1.");
     e_wt_factors_.clear();
     e_wt_factors_.resize(hyperedge_dimensions_);
     std::fill(e_wt_factors_.begin(), e_wt_factors_.end(), 1.0);
@@ -454,8 +582,8 @@ void TritonPart::EvaluateHypergraphSolution(unsigned int num_parts_arg,
                 GetVectorString(e_wt_factors_));
 
   if (static_cast<int>(v_wt_factors_.size()) != vertex_dimensions_) {
-    logger_->report(
-        "[WARNING] no vertex weighting is specified. Use default value of 1.");
+    logger_->warn(
+        PAR, 124, "No vertex weighting is specified. Use default value of 1.");
     v_wt_factors_.clear();
     v_wt_factors_.resize(vertex_dimensions_);
     std::fill(v_wt_factors_.begin(), v_wt_factors_.end(), 1.0);
@@ -467,9 +595,10 @@ void TritonPart::EvaluateHypergraphSolution(unsigned int num_parts_arg,
     if (placement_dimensions_ <= 0) {
       placement_wt_factors_.clear();
     } else {
-      logger_->report(
-          "[WARNING] no placement weighting is specified. Use default value of "
-          "1.");
+      logger_->warn(
+          PAR,
+          125,
+          "No placement weighting is specified. Use default value of 1.");
       placement_wt_factors_.clear();
       placement_wt_factors_.resize(placement_dimensions_);
       std::fill(
@@ -496,20 +625,19 @@ void TritonPart::EvaluateHypergraphSolution(unsigned int num_parts_arg,
   logger_->info(PAR, 50, "extra_delay : {}", extra_delay_);
 
   // create the evaluator class
-  TP_evaluator_ptr evaluator
-      = std::make_shared<GoldenEvaluator>(num_parts_,
-                                          // weight vectors
-                                          e_wt_factors_,
-                                          v_wt_factors_,
-                                          placement_wt_factors_,
-                                          // timing related weight
-                                          net_timing_factor_,
-                                          path_timing_factor_,
-                                          path_snaking_factor_,
-                                          timing_exp_factor_,
-                                          extra_delay_,
-                                          original_hypergraph_,
-                                          logger_);
+  auto evaluator = std::make_shared<GoldenEvaluator>(num_parts_,
+                                                     // weight vectors
+                                                     e_wt_factors_,
+                                                     v_wt_factors_,
+                                                     placement_wt_factors_,
+                                                     // timing related weight
+                                                     net_timing_factor_,
+                                                     path_timing_factor_,
+                                                     path_snaking_factor_,
+                                                     timing_exp_factor_,
+                                                     extra_delay_,
+                                                     original_hypergraph_,
+                                                     logger_);
 
   evaluator->ConstraintAndCutEvaluator(
       original_hypergraph_, solution_, ub_factor_, group_attr_, true);
@@ -545,7 +673,7 @@ void TritonPart::EvaluatePartDesignSolution(
   logger_->report("========================================");
   logger_->report("[STATUS] Starting TritonPart Partitioner");
   logger_->report("========================================");
-  logger_->report("[INFO] Partitioning parameters**** ");
+  logger_->info(PAR, 170, "Partitioning parameters**** ");
   const int dbu = db_->getTech()->getDbUnitsPerMicron();
   block_ = db_->getChip()->getBlock();
   // Parameters
@@ -637,9 +765,10 @@ void TritonPart::EvaluatePartDesignSolution(
 
   // check the weighting scheme
   if (static_cast<int>(e_wt_factors_.size()) != hyperedge_dimensions_) {
-    logger_->report(
-        "[WARNING] no hyperedge weighting is specified. Use default value of "
-        "1.");
+    logger_->warn(
+        PAR,
+        126,
+        "No hyperedge weighting is specified. Use default value of 1.");
     e_wt_factors_.clear();
     e_wt_factors_.resize(hyperedge_dimensions_);
     std::fill(e_wt_factors_.begin(), e_wt_factors_.end(), 1.0);
@@ -650,8 +779,8 @@ void TritonPart::EvaluatePartDesignSolution(
                 GetVectorString(e_wt_factors_));
 
   if (static_cast<int>(v_wt_factors_.size()) != vertex_dimensions_) {
-    logger_->report(
-        "[WARNING] no vertex weighting is specified. Use default value of 1.");
+    logger_->warn(
+        PAR, 127, "No vertex weighting is specified. Use default value of 1.");
     v_wt_factors_.clear();
     v_wt_factors_.resize(vertex_dimensions_);
     std::fill(v_wt_factors_.begin(), v_wt_factors_.end(), 1.0);
@@ -663,9 +792,10 @@ void TritonPart::EvaluatePartDesignSolution(
     if (placement_dimensions_ <= 0) {
       placement_wt_factors_.clear();
     } else {
-      logger_->report(
-          "[WARNING] no placement weighting is specified. Use default value of "
-          "1.");
+      logger_->warn(
+          PAR,
+          128,
+          "No placement weighting is specified. Use default value of 1.");
       placement_wt_factors_.clear();
       placement_wt_factors_.resize(placement_dimensions_);
       std::fill(
@@ -685,20 +815,19 @@ void TritonPart::EvaluatePartDesignSolution(
   logger_->info(PAR, 76, "extra_delay : {}", extra_delay_);
 
   // create the evaluator class
-  TP_evaluator_ptr evaluator
-      = std::make_shared<GoldenEvaluator>(num_parts_,
-                                          // weight vectors
-                                          e_wt_factors_,
-                                          v_wt_factors_,
-                                          placement_wt_factors_,
-                                          // timing related weight
-                                          net_timing_factor_,
-                                          path_timing_factor_,
-                                          path_snaking_factor_,
-                                          timing_exp_factor_,
-                                          extra_delay_,
-                                          original_hypergraph_,
-                                          logger_);
+  auto evaluator = std::make_shared<GoldenEvaluator>(num_parts_,
+                                                     // weight vectors
+                                                     e_wt_factors_,
+                                                     v_wt_factors_,
+                                                     placement_wt_factors_,
+                                                     // timing related weight
+                                                     net_timing_factor_,
+                                                     path_timing_factor_,
+                                                     path_snaking_factor_,
+                                                     timing_exp_factor_,
+                                                     extra_delay_,
+                                                     original_hypergraph_,
+                                                     logger_);
 
   evaluator->InitializeTiming(original_hypergraph_);
 
@@ -779,16 +908,16 @@ std::vector<int> TritonPart::PartitionKWaySimpleMode(
   }
 
   // Build the original hypergraph first
-  original_hypergraph_ = std::make_shared<TPHypergraph>(vertex_dimensions_,
-                                                        hyperedge_dimensions_,
-                                                        placement_dimensions_,
-                                                        hyperedges_,
-                                                        vertex_weights_,
-                                                        hyperedge_weights_,
-                                                        fixed_attr_,
-                                                        community_attr_,
-                                                        placement_attr_,
-                                                        logger_);
+  original_hypergraph_ = std::make_shared<Hypergraph>(vertex_dimensions_,
+                                                      hyperedge_dimensions_,
+                                                      placement_dimensions_,
+                                                      hyperedges_,
+                                                      vertex_weights_,
+                                                      hyperedge_weights_,
+                                                      fixed_attr_,
+                                                      community_attr_,
+                                                      placement_attr_,
+                                                      logger_);
 
   // call the multilevel partitioner to partition hypergraph_
   // but the evaluation is the original_hypergraph_
@@ -902,7 +1031,7 @@ void TritonPart::ReadHypergraph(const std::string& hypergraph_file,
     }
     fixed_file_input.close();
     if (static_cast<int>(fixed_attr_.size()) != num_vertices_) {
-      logger_->report("[WARNING] Reset the fixed attributes to NONE !");
+      logger_->warn(PAR, 129, "Reset the fixed attributes to NONE.");
       fixed_attr_.clear();
     }
   }
@@ -920,7 +1049,7 @@ void TritonPart::ReadHypergraph(const std::string& hypergraph_file,
     }
     community_file_input.close();
     if (static_cast<int>(community_attr_.size()) != num_vertices_) {
-      logger_->report("[WARNING] Reset the community attributes to NONE !");
+      logger_->warn(PAR, 130, "Reset the community attributes to NONE.");
       community_attr_.clear();
     }
   }
@@ -1007,28 +1136,28 @@ void TritonPart::ReadHypergraph(const std::string& hypergraph_file,
     }
 
     if (static_cast<int>(placement_attr_.size()) != num_vertices_) {
-      logger_->report("[WARNING] Reset the placement attributes to NONE !");
+      logger_->warn(PAR, 132, "Reset the placement attributes to NONE.");
       placement_attr_.clear();
     }
   }
 
   // Build the original hypergraph first
-  original_hypergraph_ = std::make_shared<TPHypergraph>(vertex_dimensions_,
-                                                        hyperedge_dimensions_,
-                                                        placement_dimensions_,
-                                                        hyperedges_,
-                                                        vertex_weights_,
-                                                        hyperedge_weights_,
-                                                        fixed_attr_,
-                                                        community_attr_,
-                                                        placement_attr_,
-                                                        logger_);
+  original_hypergraph_ = std::make_shared<Hypergraph>(vertex_dimensions_,
+                                                      hyperedge_dimensions_,
+                                                      placement_dimensions_,
+                                                      hyperedges_,
+                                                      vertex_weights_,
+                                                      hyperedge_weights_,
+                                                      fixed_attr_,
+                                                      community_attr_,
+                                                      placement_attr_,
+                                                      logger_);
 
   // show the status of hypergraph
-  logger_->report("[INFO] Hypergraph Information**");
-  logger_->report("[INFO] Vertices = {}", original_hypergraph_->num_vertices_);
-  logger_->report("[INFO] Hyperedges = {}",
-                  original_hypergraph_->num_hyperedges_);
+  logger_->info(PAR, 171, "Hypergraph Information**");
+  logger_->info(PAR, 172, "Vertices = {}", original_hypergraph_->num_vertices_);
+  logger_->info(
+      PAR, 173, "Hyperedges = {}", original_hypergraph_->num_hyperedges_);
 }
 
 // for design partitioning
@@ -1159,8 +1288,8 @@ void TritonPart::ReadNetlist(const std::string& fixed_file,
   if (fixed_file.empty() == false) {
     std::ifstream file_input(fixed_file);
     if (!file_input.is_open()) {
-      logger_->report("[WARNING] Cannot open the fixed instance file : {}",
-                      fixed_file);
+      logger_->warn(
+          PAR, 133, "Cannot open the fixed instance file : {}", fixed_file);
     } else {
       fixed_attr_.resize(num_vertices_);
       std::fill(fixed_attr_.begin(), fixed_attr_.end(), -1);
@@ -1186,8 +1315,8 @@ void TritonPart::ReadNetlist(const std::string& fixed_file,
   if (community_file.empty() == false) {
     std::ifstream file_input(community_file);
     if (!file_input.is_open()) {
-      logger_->report("[WARNING] Cannot open the community file : {}",
-                      community_file);
+      logger_->warn(
+          PAR, 134, "Cannot open the community file : {}", community_file);
     } else {
       community_attr_.resize(num_vertices_);
       std::fill(community_attr_.begin(), community_attr_.end(), -1);
@@ -1213,7 +1342,7 @@ void TritonPart::ReadNetlist(const std::string& fixed_file,
   if (group_file.empty() == false) {
     std::ifstream file_input(group_file);
     if (!file_input.is_open()) {
-      logger_->report("[WARNING] Cannot open the group file : {}", group_file);
+      logger_->warn(PAR, 135, "Cannot open the group file : {}", group_file);
     } else {
       group_attr_.clear();
       std::string cur_line;
@@ -1320,26 +1449,26 @@ void TritonPart::ReadNetlist(const std::string& fixed_file,
     hyperedges_arc_set.push_back(arc_set);
   }
 
-  original_hypergraph_ = std::make_shared<TPHypergraph>(vertex_dimensions_,
-                                                        hyperedge_dimensions_,
-                                                        placement_dimensions_,
-                                                        hyperedges_,
-                                                        vertex_weights_,
-                                                        hyperedge_weights_,
-                                                        fixed_attr_,
-                                                        community_attr_,
-                                                        placement_attr_,
-                                                        vertex_types_,
-                                                        hyperedge_slacks_,
-                                                        hyperedges_arc_set,
-                                                        timing_paths_,
-                                                        logger_);
+  original_hypergraph_ = std::make_shared<Hypergraph>(vertex_dimensions_,
+                                                      hyperedge_dimensions_,
+                                                      placement_dimensions_,
+                                                      hyperedges_,
+                                                      vertex_weights_,
+                                                      hyperedge_weights_,
+                                                      fixed_attr_,
+                                                      community_attr_,
+                                                      placement_attr_,
+                                                      vertex_types_,
+                                                      hyperedge_slacks_,
+                                                      hyperedges_arc_set,
+                                                      timing_paths_,
+                                                      logger_);
   // show the status of hypergraph
-  logger_->report("[INFO] Netlist Information**");
-  logger_->report("[INFO] Vertices = {}", original_hypergraph_->num_vertices_);
-  logger_->report("[INFO] Hyperedges = {}",
-                  original_hypergraph_->num_hyperedges_);
-  logger_->report("[INFO] Number of timing paths = {}", timing_paths_.size());
+  logger_->info(PAR, 174, "Netlist Information**");
+  logger_->info(PAR, 175, "Vertices = {}", original_hypergraph_->num_vertices_);
+  logger_->info(
+      PAR, 176, "Hyperedges = {}", original_hypergraph_->num_hyperedges_);
+  logger_->info(PAR, 177, "Number of timing paths = {}", timing_paths_.size());
 }
 
 // Find all the critical timing paths
@@ -1350,7 +1479,7 @@ void TritonPart::ReadNetlist(const std::string& fixed_file,
 void TritonPart::BuildTimingPaths()
 {
   if (timing_aware_flag_ == false || top_n_ <= 0) {
-    logger_->report("[WARNING] Timing driven partitioning is disabled");
+    logger_->warn(PAR, 136, "Timing driven partitioning is disabled");
     return;
   }
   sta_->ensureGraph();     // Ensure that the timing graph has been built
@@ -1482,10 +1611,10 @@ void TritonPart::BuildTimingPaths()
   }
 
   // normalize all the slack
-  logger_->report("[INFO] maximum_clock_period : {} second",
-                  maximum_clock_period_);
+  logger_->info(
+      PAR, 178, "maximum_clock_period : {} second", maximum_clock_period_);
   extra_delay_ = extra_delay_ / maximum_clock_period_;
-  logger_->report("[INFO] normalized extra delay : {}", extra_delay_);
+  logger_->info(PAR, 179, "normalized extra delay : {}", extra_delay_);
   if (guardband_flag_ == false) {
     for (auto& timing_path : timing_paths_) {
       timing_path.slack = timing_path.slack / maximum_clock_period_;
@@ -1496,18 +1625,20 @@ void TritonPart::BuildTimingPaths()
           = timing_path.slack / maximum_clock_period_ - extra_delay_;
     }
   }
-  logger_->report(
-      "[INFO] We normalized the slack of each path based on maximum clock "
-      "period");
+  logger_->info(PAR,
+                180,
+                "We normalized the slack of each path based on maximum clock "
+                "period");
   // resize the hyperedge_slacks_
   hyperedge_slacks_.clear();
   hyperedge_slacks_.resize(num_hyperedges_);
   std::fill(hyperedge_slacks_.begin(),
             hyperedge_slacks_.end(),
             maximum_clock_period_);
-  logger_->report(
-      "[INFO] We normalized the slack of each net based on maximum clock "
-      "period");
+  logger_->info(
+      PAR,
+      181,
+      "We normalized the slack of each net based on maximum clock period");
   int num_unconstrained_hyperedges = 0;
   // check the slack on each net
   for (auto db_net : block_->getNets()) {
@@ -1532,11 +1663,16 @@ void TritonPart::BuildTimingPaths()
     }
   }
   logger_->report("[STATUS] Finish traversing timing graph");
-  logger_->report("[WARNING] {} unconstrained hyperedges !",
+  if (num_unconstrained_hyperedges > 0) {
+    logger_->warn(PAR,
+                  137,
+                  "{} unconstrained hyperedges !",
                   num_unconstrained_hyperedges);
-  logger_->report(
-      "[WARNING] Reset the slack of all unconstrained hyperedges to {} seconds",
-      maximum_clock_period_);
+  }
+  logger_->warn(PAR,
+                138,
+                "Reset the slack of all unconstrained hyperedges to {} seconds",
+                maximum_clock_period_);
 }
 
 // Partition the hypergraph_ with the multilevel methodology
@@ -1547,9 +1683,10 @@ void TritonPart::MultiLevelPartition()
 
   // check the weighting scheme
   if (static_cast<int>(e_wt_factors_.size()) != hyperedge_dimensions_) {
-    logger_->report(
-        "[WARNING] no hyperedge weighting is specified. Use default value of "
-        "1.");
+    logger_->warn(
+        PAR,
+        139,
+        "No hyperedge weighting is specified. Use default value of 1.");
     e_wt_factors_.clear();
     e_wt_factors_.resize(hyperedge_dimensions_);
     std::fill(e_wt_factors_.begin(), e_wt_factors_.end(), 1.0);
@@ -1560,8 +1697,8 @@ void TritonPart::MultiLevelPartition()
                 GetVectorString(e_wt_factors_));
 
   if (static_cast<int>(v_wt_factors_.size()) != vertex_dimensions_) {
-    logger_->report(
-        "[WARNING] no vertex weighting is specified. Use default value of 1.");
+    logger_->warn(
+        PAR, 141, "No vertex weighting is specified. Use default value of 1.");
     v_wt_factors_.clear();
     v_wt_factors_.resize(vertex_dimensions_);
     std::fill(v_wt_factors_.begin(), v_wt_factors_.end(), 1.0);
@@ -1573,9 +1710,10 @@ void TritonPart::MultiLevelPartition()
     if (placement_dimensions_ <= 0) {
       placement_wt_factors_.clear();
     } else {
-      logger_->report(
-          "[WARNING] no placement weighting is specified. Use default value of "
-          "1.");
+      logger_->warn(
+          PAR,
+          140,
+          "No placement weighting is specified. Use default value of 1.");
       placement_wt_factors_.clear();
       placement_wt_factors_.resize(placement_dimensions_);
       std::fill(
@@ -1622,7 +1760,7 @@ void TritonPart::MultiLevelPartition()
       PAR, 101, "num_vertices_threshold_ilp : {}", num_vertices_threshold_ilp_);
 
   // create the evaluator class
-  TP_evaluator_ptr tritonpart_evaluator
+  auto tritonpart_evaluator
       = std::make_shared<GoldenEvaluator>(num_parts_,
                                           // weight vectors
                                           e_wt_factors_,
@@ -1638,9 +1776,9 @@ void TritonPart::MultiLevelPartition()
                                           logger_);
 
   // create the balance constraint
-  MATRIX<float> upper_block_balance
+  Matrix<float> upper_block_balance
       = original_hypergraph_->GetUpperVertexBalance(num_parts_, ub_factor_);
-  MATRIX<float> lower_block_balance
+  Matrix<float> lower_block_balance
       = original_hypergraph_->GetLowerVertexBalance(num_parts_, ub_factor_);
 
   // Step 1 : create all the coarsening, partitionig and refinement class
@@ -1649,87 +1787,83 @@ void TritonPart::MultiLevelPartition()
                      min_num_vertices_each_part_ * num_parts_);
 
   // create the coarsener cluster
-  TP_coarsening_ptr tritonpart_coarsener
-      = std::make_shared<TPcoarsener>(num_parts_,
-                                      thr_coarsen_hyperedge_size_skip_,
-                                      thr_coarsen_vertices_,
-                                      thr_coarsen_hyperedges_,
-                                      coarsening_ratio_,
-                                      max_coarsen_iters_,
-                                      adj_diff_ratio_,
-                                      thr_cluster_weight,
-                                      seed_,
-                                      coarsen_order_,
-                                      tritonpart_evaluator,
-                                      logger_);
+  auto tritonpart_coarsener
+      = std::make_shared<Coarsener>(num_parts_,
+                                    thr_coarsen_hyperedge_size_skip_,
+                                    thr_coarsen_vertices_,
+                                    thr_coarsen_hyperedges_,
+                                    coarsening_ratio_,
+                                    max_coarsen_iters_,
+                                    adj_diff_ratio_,
+                                    thr_cluster_weight,
+                                    seed_,
+                                    coarsen_order_,
+                                    tritonpart_evaluator,
+                                    logger_);
 
   // create the initial partitioning class
-  TP_partitioning_ptr tritonpart_partitioner = std::make_shared<TPpartitioner>(
+  auto tritonpart_partitioner = std::make_shared<Partitioner>(
       num_parts_, seed_, tritonpart_evaluator, logger_);
 
   // create the refinement classes
   // We have four types of refiner
   // (1) greedy refinement. try to one entire hyperedge each time
-  TP_greedy_refiner_ptr greedy_refiner
-      = std::make_shared<TPgreedyRefine>(num_parts_,
-                                         refiner_iters_,
-                                         path_timing_factor_,
-                                         path_snaking_factor_,
-                                         max_moves_,
-                                         tritonpart_evaluator,
-                                         logger_);
+  auto greedy_refiner = std::make_shared<GreedyRefine>(num_parts_,
+                                                       refiner_iters_,
+                                                       path_timing_factor_,
+                                                       path_snaking_factor_,
+                                                       max_moves_,
+                                                       tritonpart_evaluator,
+                                                       logger_);
 
   // (2) ILP-based partitioning (only for two-way since k-way ILP partitioning
   // is too timing-consuming)
-  TP_ilp_refiner_ptr ilp_refiner
-      = std::make_shared<TPilpRefine>(num_parts_,
-                                      refiner_iters_,
-                                      path_timing_factor_,
-                                      path_snaking_factor_,
-                                      max_moves_,
-                                      tritonpart_evaluator,
-                                      logger_);
+  auto ilp_refiner = std::make_shared<IlpRefine>(num_parts_,
+                                                 refiner_iters_,
+                                                 path_timing_factor_,
+                                                 path_snaking_factor_,
+                                                 max_moves_,
+                                                 tritonpart_evaluator,
+                                                 logger_);
 
   // (3) direct k-way FM
-  TP_k_way_fm_refiner_ptr k_way_fm_refiner
-      = std::make_shared<TPkWayFMRefine>(num_parts_,
-                                         refiner_iters_,
-                                         path_timing_factor_,
-                                         path_snaking_factor_,
-                                         max_moves_,
-                                         total_corking_passes_,
-                                         tritonpart_evaluator,
-                                         logger_);
+  auto k_way_fm_refiner = std::make_shared<KWayFMRefine>(num_parts_,
+                                                         refiner_iters_,
+                                                         path_timing_factor_,
+                                                         path_snaking_factor_,
+                                                         max_moves_,
+                                                         total_corking_passes_,
+                                                         tritonpart_evaluator,
+                                                         logger_);
 
   // (4) k-way pair-wise FM
-  TP_k_way_pm_refiner_ptr k_way_pm_refiner
-      = std::make_shared<TPkWayPMRefine>(num_parts_,
-                                         refiner_iters_,
-                                         path_timing_factor_,
-                                         path_snaking_factor_,
-                                         max_moves_,
-                                         total_corking_passes_,
-                                         tritonpart_evaluator,
-                                         logger_);
+  auto k_way_pm_refiner = std::make_shared<KWayPMRefine>(num_parts_,
+                                                         refiner_iters_,
+                                                         path_timing_factor_,
+                                                         path_snaking_factor_,
+                                                         max_moves_,
+                                                         total_corking_passes_,
+                                                         tritonpart_evaluator,
+                                                         logger_);
 
   // create the multi-level class
-  TP_multi_level_partitioner tritonpart_mlevel_partitioner
-      = std::make_shared<TPmultilevelPartitioner>(num_parts_,
-                                                  v_cycle_flag_,
-                                                  num_initial_solutions_,
-                                                  num_best_initial_solutions_,
-                                                  num_vertices_threshold_ilp_,
-                                                  max_num_vcycle_,
-                                                  num_coarsen_solutions_,
-                                                  seed_,
-                                                  tritonpart_coarsener,
-                                                  tritonpart_partitioner,
-                                                  k_way_fm_refiner,
-                                                  k_way_pm_refiner,
-                                                  greedy_refiner,
-                                                  ilp_refiner,
-                                                  tritonpart_evaluator,
-                                                  logger_);
+  auto tritonpart_mlevel_partitioner
+      = std::make_shared<MultilevelPartitioner>(num_parts_,
+                                                v_cycle_flag_,
+                                                num_initial_solutions_,
+                                                num_best_initial_solutions_,
+                                                num_vertices_threshold_ilp_,
+                                                max_num_vcycle_,
+                                                num_coarsen_solutions_,
+                                                seed_,
+                                                tritonpart_coarsener,
+                                                tritonpart_partitioner,
+                                                k_way_fm_refiner,
+                                                k_way_pm_refiner,
+                                                greedy_refiner,
+                                                ilp_refiner,
+                                                tritonpart_evaluator,
+                                                logger_);
 
   if (timing_aware_flag_ == true) {
     // Initialize the timing on original_hypergraph_

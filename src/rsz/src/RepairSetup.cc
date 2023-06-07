@@ -363,7 +363,6 @@ RepairSetup::repairSetup(PathRef &path,
 
       // Debug code
       generatePairedBufferReport(drvr_path, drvr_index, &expanded);
-      logicCloningFun(drvr_path, drvr_index, &expanded);
 
       if (!skip_pin_swap) {
         if (swapPins(drvr_path, drvr_index, &expanded)) {
@@ -426,15 +425,6 @@ void RepairSetup::debugCheckMultipleBuffers(PathRef &path,
     printf("done\n");
 }
 
-bool RepairSetup::logicCloningFun(PathRef *drvr_path,
-                                   int drvr_index,
-                                   PathExpanded *expanded)
-{
-  printf("HAHAHAHAHA\n");
-  // First step is to find nets that have high fanout
-  return false;
-}
-
 bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
                                              int drvr_index,
                                              PathExpanded *expanded)
@@ -456,7 +446,7 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
     LibertyPort *out = nullptr;
     LibertyCell *cell = nullptr;
     bool have_buffer = false;
-    printf("1XXXXQAAAAA The path has %d elements\n", count);
+    //printf("1XXXXQAAAAA The path has %d elements\n", count);
 
     vector<vector<std::tuple<LibertyCell *, Instance *>>> buffer_chains;
     vector<std::tuple<LibertyCell *, Instance *>> buffer_chain;
@@ -489,7 +479,7 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
             }
             else {
                 if (buffer_chain.size() > 1) {
-                  printf("Found a chain of length %lu\n", buffer_chain.size());
+                  //printf("Found a chain of length %lu\n", buffer_chain.size());
                   buffer_chains.push_back(buffer_chain);
                 }
                 buffer_chain.clear();
@@ -498,7 +488,7 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
         }
     }
 
-    printf("2XXXXQAAAAA The path has %d elements\n", count);
+    //printf("2XXXXQAAAAA The path has %d elements\n", count);
     return false;
 }
 
@@ -515,7 +505,8 @@ bool RepairSetup::swapPins(PathRef *drvr_path,
     PathRef *in_path = expanded->path(in_index);
     Pin *in_pin = in_path->pin(sta_);
 
-    swap_pin_inst_map_.clear();
+    // Very bad hack.
+    static std::unordered_map<const Instance *, int> instance_set;
 
     if (!resizer_->dontTouch(drvr)) {
         // We get the driver port and the cell for that port.
@@ -541,14 +532,14 @@ bool RepairSetup::swapPins(PathRef *drvr_path,
 
         // Check if we have already dealt with this instance more than twice.
         // Skip if the answeris a yes.
-        if (swap_pin_inst_map_.find(drvr) == swap_pin_inst_map_.end()) {
-            swap_pin_inst_map_.insert(std::make_pair(drvr,1));
+        if (instance_set.find(drvr) == instance_set.end()) {
+            instance_set.insert(std::make_pair(drvr,1));
         }
         else {
             // If the candidate shows up twice then it is marginal and we should
             // just stop considering it.
-            if (swap_pin_inst_map_[drvr] == 1) {
-                swap_pin_inst_map_[drvr] = 2;
+            if (instance_set[drvr] == 1) {
+                instance_set[drvr] = 2;
                 --swap_pin_count_;
             }
             else

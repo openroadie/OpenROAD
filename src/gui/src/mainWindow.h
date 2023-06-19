@@ -40,6 +40,7 @@
 #include <memory>
 
 #include "findDialog.h"
+#include "gotoDialog.h"
 #include "gui/gui.h"
 #include "ord/OpenRoad.hh"
 #include "ruler.h"
@@ -64,6 +65,9 @@ class TimingWidget;
 class DRCWidget;
 class ClockWidget;
 class BrowserWidget;
+#ifdef ENABLE_CHARTS
+class ChartsWidget;
+#endif
 
 // This is the main window for the GUI.  Currently we use a single
 // instance of this class.
@@ -126,6 +130,8 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
 
   // Ruler Requested on the Layout
   void rulersChanged();
+
+  void displayUnitsChanged(int dbu_per_micron, bool useDBU);
 
  public slots:
   // Save the current state into settings for the next session.
@@ -203,6 +209,9 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   // Show Find Dialog Box
   void showFindDialog();
 
+  // Show Goto Dialog Box
+  void showGotoDialog();
+
   // Show help in browser
   void showHelp();
 
@@ -231,6 +240,8 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
                                     bool output,
                                     bool input,
                                     int highlight_group = 0);
+  void selectHighlightConnectedBufferTrees(bool select_flag,
+                                           int highlight_group = 0);
 
   void timingCone(Gui::odbTerm term, bool fanin, bool fanout);
   void timingPathsThrough(const std::set<Gui::odbTerm>& terms);
@@ -273,7 +284,7 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   utl::Logger* logger_;
   SelectionSet selected_;
   HighlightSet highlighted_;
-  std::vector<std::unique_ptr<Ruler>> rulers_;
+  Rulers rulers_;
 
   // All but viewer_ are owned by this widget.  Qt will
   // handle destroying the children.
@@ -287,8 +298,12 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   DRCWidget* drc_viewer_;
   ClockWidget* clock_viewer_;
   BrowserWidget* hierarchy_widget_;
+#ifdef ENABLE_CHARTS
+  ChartsWidget* charts_widget_;
+#endif
 
   FindObjectDialog* find_dialog_;
+  GotoLocationDialog* goto_dialog_;
 
   QMenu* file_menu_;
   QMenu* view_menu_;
@@ -307,6 +322,7 @@ class MainWindow : public QMainWindow, public ord::OpenRoadObserver
   QAction* timing_debug_;
   QAction* zoom_in_;
   QAction* zoom_out_;
+  QAction* goto_position_;
   QAction* help_;
   QAction* build_ruler_;
   QAction* show_dbu_;

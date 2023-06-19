@@ -32,10 +32,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //
 ///////////////////////////////////////////////////////////////////////////////
-#include "Hypergraph.h"
-#include "Refiner.h"
-#include "Utilities.h"
-#include "utl/Logger.h"
+#include "ILPRefine.h"
 
 // ------------------------------------------------------------------------------
 // ILP-based refinement
@@ -45,6 +42,8 @@
 // ------------------------------------------------------------------------------
 
 namespace par {
+
+using utl::PAR;
 
 // Implement the ILP-based refinement pass
 float IlpRefine::Pass(
@@ -80,10 +79,10 @@ float IlpRefine::Pass(
   for (const auto& v : boundary_vertices) {
     vertices_extracted.push_back(v);
     vertices_extracted_map[v] = vertex_id++;
-    vertices_weight_extracted.push_back(hgraph->vertex_weights_[v]);
+    vertices_weight_extracted.push_back(hgraph->GetVertexWeights(v));
     const int block_id = solution[v];
     block_balance[block_id]
-        = block_balance[block_id] - hgraph->vertex_weights_[v];
+        = block_balance[block_id] - hgraph->GetVertexWeights(v);
   }
   const int part_vertex_id_base = vertex_id;
   // the remaining vertices in each block are modeled as a fixed vertex
@@ -96,15 +95,14 @@ float IlpRefine::Pass(
   // get the hyperedge information
   std::set<int> boundary_hyperedges;
   for (const auto& v : boundary_vertices) {
-    for (int idx = hgraph->vptr_[v]; idx < hgraph->vptr_[v + 1]; idx++) {
-      boundary_hyperedges.insert(hgraph->vind_[idx]);
+    for (const int edge_id : hgraph->Edges(v)) {
+      boundary_hyperedges.insert(edge_id);
     }
   }
   // convert boundary hyperegdes into extracted hyperedges
   for (const auto& e : boundary_hyperedges) {
     std::set<int> hyperedge;
-    for (int idx = hgraph->eptr_[e]; idx < hgraph->eptr_[e + 1]; idx++) {
-      const int vertex_id = hgraph->eind_[idx];
+    for (const int vertex_id : hgraph->Vertices(e)) {
       if (vertices_extracted_map.find(vertex_id)
           == vertices_extracted_map.end()) {
         hyperedge.insert(part_vertex_id_base + solution[vertex_id]);
@@ -120,7 +118,7 @@ float IlpRefine::Pass(
     }
   }
   // get vertex weight dimension
-  const int vertex_weight_dimension = hgraph->vertex_dimensions_;
+  const int vertex_weight_dimension = hgraph->GetVertexDimensions();
   // call the ILP solver
   std::vector<int> solution_extracted;
   if (ILPPartitionInst(num_parts_,
@@ -133,8 +131,8 @@ float IlpRefine::Pass(
                        upper_block_balance,
                        lower_block_balance)
       == false) {
-    logger_->report(
-        "[WARNING] ILP-based partitioning cannot find a valid solution.");
+    logger_->warn(
+        PAR, 115, "ILP-based partitioning cannot find a valid solution.");
     return 0.0;  // no valid solution
   }
   // try to update the solution

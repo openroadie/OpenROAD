@@ -165,9 +165,11 @@ Resizer::Resizer()
       unique_inst_index_(1),
       resize_count_(0),
       inserted_buffer_count_(0),
+      cloned_gate_count_(0),
       buffer_moved_into_core_(false),
       max_wire_length_(0),
-      worst_slack_nets_percent_(10)
+      worst_slack_nets_percent_(10),
+      opendp_(nullptr)
 {
 }
 
@@ -183,8 +185,10 @@ void Resizer::init(Logger* logger,
                    dbSta* sta,
                    SteinerTreeBuilder* stt_builder,
                    GlobalRouter* global_router,
+                   dpl::Opendp* opendp,
                    std::unique_ptr<AbstractSteinerRenderer> steiner_renderer)
 {
+  opendp_ = opendp;
   logger_ = logger;
   db_ = db;
   block_ = nullptr;
@@ -468,6 +472,31 @@ Resizer::hasPins(Net *net)
   bool has_pins = pin_iter->hasNext();
   delete pin_iter;
   return has_pins;
+}
+
+std::vector<const Pin*>
+Resizer::getPins(Net* net) const
+{
+  std::vector<const Pin*> pins;
+  auto pin_iter = network_->pinIterator(net);
+  while (pin_iter->hasNext()) {
+    const Pin *pin = pin_iter->next();
+    pins.push_back(pin);
+  }
+  delete pin_iter;
+  return pins;
+}
+
+std::vector<const Pin*>
+Resizer::getPins(Instance *inst) const
+{
+  std::vector<const Pin*> pins;
+  auto pin_iter = network_->pinIterator(inst);
+  while (pin_iter->hasNext()) {
+    const Pin *pin = pin_iter->next();
+    pins.push_back(pin);
+  }
+  return pins;
 }
 
 Instance *
@@ -914,6 +943,13 @@ Resizer::replaceCell(Instance *inst,
 {
   const char *replacement_name = replacement->name();
   dbMaster *replacement_master = db_->findMaster(replacement_name);
+
+  // Legalize the position of the instance in case it leaves the die
+  if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    opendp_->legalCellPos(db_network_->staToDb(inst));
+  } else if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    logger_->error(RSZ, 91, "Opendp was not initialized before resized an instance");
+  }
   if (replacement_master) {
     dbInst *dinst = db_network_->staToDb(inst);
     dbMaster *master = dinst->getMaster();
@@ -980,7 +1016,7 @@ Resizer::findResizeSlacks()
                                repaired_net_count, slew_violations, cap_violations,
                                fanout_violations, length_violations);
   findResizeSlacks1();
-  journalRestore(resize_count_, inserted_buffer_count_);
+  journalRestore(resize_count_, inserted_buffer_count_, cloned_gate_count_);
 }
   
 void
@@ -2245,6 +2281,9 @@ Resizer::repairDesign(double max_wire_length,
                       double cap_margin)
 {
   resizePreamble();
+  if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    opendp_->initMacrosAndGrid();
+  }
   repair_design_->repairDesign(max_wire_length, slew_margin, cap_margin);
 }
 
@@ -2385,11 +2424,15 @@ void
 Resizer::repairSetup(double setup_margin,
                      double repair_tns_end_percent,
                      int max_passes,
-                     bool skip_pin_swap)
+                     bool skip_pin_swap,
+                     bool enable_gate_cloning)
 {
   resizePreamble();
+  if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    opendp_->initMacrosAndGrid();
+  }
   repair_setup_->repairSetup(setup_margin, repair_tns_end_percent,
-                             max_passes, skip_pin_swap);
+                             max_passes, skip_pin_swap, enable_gate_cloning);
 }
 
 void
@@ -2417,6 +2460,9 @@ Resizer::repairHold(double setup_margin,
                     int max_passes)
 {
   resizePreamble();
+  if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    opendp_->initMacrosAndGrid();
+  }
   repair_hold_->repairHold(setup_margin, hold_margin,
                            allow_setup_violations,
                            max_buffer_percent, max_passes);
@@ -2451,6 +2497,7 @@ Resizer::journalBegin()
   debugPrint(logger_, RSZ, "journal", 1, "journal begin");
   resized_inst_map_.clear();
   inserted_buffers_.clear();
+  cloned_gates_.clear();
   swapped_pins_.clear();
 }
 
@@ -2460,6 +2507,7 @@ Resizer::journalEnd()
   debugPrint(logger_, RSZ, "journal", 1, "journal end");
   resized_inst_map_.clear();
   inserted_buffers_.clear();
+  cloned_gates_.clear();  
   swapped_pins_.clear();
 }
 
@@ -2495,7 +2543,8 @@ Resizer::journalMakeBuffer(Instance *buffer)
 
 void
 Resizer::journalRestore(int &resize_count,
-                        int &inserted_buffer_count)
+                        int &inserted_buffer_count,
+                        int &cloned_gate_count)
 {
   for (auto [inst, lib_cell] : resized_inst_map_) {
     if (!inserted_buffer_set_.hasKey(inst)) {
@@ -2517,6 +2566,7 @@ Resizer::journalRestore(int &resize_count,
     inserted_buffer_count--;
   }
 
+  // Undo pin swaps
   for (const auto& element : swapped_pins_) {
     Instance *inst = element.first;
     LibertyPort *port1 = std::get<0>(element.second);
@@ -2526,6 +2576,44 @@ Resizer::journalRestore(int &resize_count,
     swapPins(inst, port2, port1, false);
   }
   swapped_pins_.clear();
+
+
+  // Undo gate cloning
+  for (auto element : cloned_gates_) {
+    auto original_inst = element.first;
+    auto cloned_inst = element.second;
+    const Pin *original_output_pin = nullptr;
+    std::vector<const Pin*> clone_pins = getPins(cloned_inst);
+    std::vector<const Pin*> original_pins = getPins(original_inst);
+    for (auto& pin : original_pins) {
+      if (network_->direction(pin)->isOutput()) {
+            original_output_pin = pin;
+            break;
+      }
+    }
+    Net* original_out_net = network_->net(original_output_pin);
+    Net* clone_out_net = network_->net(clone_pins[0]);
+
+    for (auto& pin : clone_pins) {
+      // Disconnect all pins from the new net. Also store the output net
+      if (network_->direction(pin)->isOutput()) {
+            clone_out_net = network_->net(original_output_pin);
+      }
+      sta_->disconnectPin(const_cast<Pin *>(pin));
+      // Connect them to the original nets if they are inputs
+      if (network_->direction(pin)->isInput()) {
+            Instance* inst = network_->instance(pin);
+            auto term_port = network_->port(pin);
+            sta_->connectPin(inst, term_port, original_out_net);
+      }
+    }
+    // Final cleanup
+    sta_->deleteNet(clone_out_net);
+    sta_->deleteInstance(cloned_inst);
+    sta_->graphDelayCalc()->delaysInvalid();
+    --cloned_gate_count;
+  }
+  cloned_gates_.clear();
 }
 
 ////////////////////////////////////////////////////////////////
@@ -2551,6 +2639,12 @@ Resizer::makeInstance(LibertyCell *cell,
   dbInst *db_inst = db_network_->staToDb(inst);
   db_inst->setSourceType(odb::dbSourceType::TIMING);
   setLocation(db_inst, loc);
+  // Legalize the position of the instance in case it leaves the die
+  if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    opendp_->legalCellPos(db_inst);
+  } else if (parasitics_src_ == ParasiticsSrc::global_routing) {
+    logger_->error(RSZ, 90, "Opendp was not initialized before inserting a new instance");
+  }
   designAreaIncr(area(db_inst->getMaster()));
   return inst;
 }

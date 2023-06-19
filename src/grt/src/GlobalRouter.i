@@ -180,9 +180,9 @@ set_perturbation_amount(int perturbation)
 }
 
 void
-global_route()
+global_route(bool start_incremental, bool end_incremental)
 {
-  getGlobalRouter()->globalRoute(true);
+  getGlobalRouter()->globalRoute(true, start_incremental, end_incremental);
 }
 
 void
@@ -236,11 +236,8 @@ void set_global_route_debug_cmd(const odb::dbNet *net,
 
   GlobalRouter* global_router = getGlobalRouter();
   if (global_router->getDebugFastRoute() == nullptr) {
-    FastRouteCore* fast_route_core = global_router->fastroute();
     global_router->initDebugFastRoute(std::make_unique<FastRouteRenderer>(
-      global_router->db()->getTech(),
-      fast_route_core->tile_size(),
-      fast_route_core->x_corner(), fast_route_core->y_corner()));
+      global_router->db()->getTech()));
   }
   getGlobalRouter()->setDebugNet(net);
   getGlobalRouter()->setDebugSteinerTree(steinerTree);

@@ -724,6 +724,11 @@ NetRouteMap FastRouteCore::run()
   int minoflrnd = 0;
   int bwcnt = 0;
 
+  // Init grid variables when debug mode is actived
+  if (debug_->isOn()) {
+    fastrouteRender()->setGridVariables(tile_size_, x_corner_, y_corner_);
+  }
+
   // TODO: check this size
   int max_degree2 = 2 * max_degree_;
   xcor_.resize(max_degree2);
@@ -797,7 +802,7 @@ NetRouteMap FastRouteCore::run()
                enlarge_);
     routeLVAll(newTH, enlarge_, LOGIS_COF);
 
-    past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage);
+    past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage, false);
 
     enlarge_ += 5;
     newTH -= 5;
@@ -936,7 +941,7 @@ NetRouteMap FastRouteCore::run()
                   slope,
                   L);
     int last_cong = past_cong;
-    past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage);
+    past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage, false);
 
     if (minofl > past_cong) {
       minofl = past_cong;
@@ -975,7 +980,7 @@ NetRouteMap FastRouteCore::run()
                       slope,
                       L);
         last_cong = past_cong;
-        past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage);
+        past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage, false);
 
         str_accu(12);
         L = 1;
@@ -1025,7 +1030,7 @@ NetRouteMap FastRouteCore::run()
                       slope,
                       L);
         last_cong = past_cong;
-        past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage);
+        past_cong = getOverflow2Dmaze(&maxOverflow, &tUsage, false);
         if (past_cong < last_cong) {
           copyRS();
           bmfl = past_cong;
@@ -1048,13 +1053,13 @@ NetRouteMap FastRouteCore::run()
         break;
       }
       if (i >= mazeRound) {
-        getOverflow2Dmaze(&maxOverflow, &tUsage);
+        getOverflow2Dmaze(&maxOverflow, &tUsage, false);
         break;
       }
     }
 
     if (i >= mazeRound) {
-      getOverflow2Dmaze(&maxOverflow, &tUsage);
+      getOverflow2Dmaze(&maxOverflow, &tUsage, false);
       break;
     }
 
@@ -1106,22 +1111,12 @@ NetRouteMap FastRouteCore::run()
 
   removeLoops();
 
-  getOverflow2Dmaze(&maxOverflow, &tUsage);
+  getOverflow2Dmaze(&maxOverflow, &tUsage, true);
 
   layerAssignment();
 
   costheight_ = 3;
   via_cost_ = 1;
-
-  // Debug mode Tree 3D after layer assignament
-  if (debug_->isOn() && debug_->tree3D_) {
-    for (int netID = 0; netID < netCount(); netID++) {
-      if (nets_[netID]->getDbNet() == debug_->net_
-          && !nets_[netID]->isRouted()) {
-        StTreeVisualization(sttrees_[netID], nets_[netID], true);
-      }
-    }
-  }
 
   if (goingLV && past_cong == 0) {
     mazeRouteMSMDOrder3D(enlarge_, 0, 20, layer_orientation_);
@@ -1136,6 +1131,16 @@ NetRouteMap FastRouteCore::run()
   if (verbose_) {
     logger_->info(GRT, 111, "Final number of vias: {}", numVia);
     logger_->info(GRT, 112, "Final usage 3D: {}", (finallength + 3 * numVia));
+  }
+
+  // Debug mode Tree 3D after layer assignament
+  if (debug_->isOn() && debug_->tree3D_) {
+    for (int netID = 0; netID < netCount(); netID++) {
+      if (nets_[netID]->getDbNet() == debug_->net_
+          && !nets_[netID]->isRouted()) {
+        StTreeVisualization(sttrees_[netID], nets_[netID], true);
+      }
+    }
   }
 
   NetRouteMap routes = getRoutes();

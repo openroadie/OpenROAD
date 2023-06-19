@@ -88,8 +88,6 @@ struct DebugSetting
 
 using stt::Tree;
 
-typedef std::pair<int, int> TileCongestion;
-
 class FastRouteCore
 {
  public:
@@ -150,9 +148,10 @@ class FastRouteCore
   int totalOverflow() const { return total_overflow_; }
   bool has2Doverflow() const { return has_2D_overflow_; }
   void updateDbCongestion();
-  void getCongestionGrid(
-      std::vector<std::pair<GSegment, TileCongestion>>& congestionGridV,
-      std::vector<std::pair<GSegment, TileCongestion>>& congestionGridH);
+  void findCongestedEdgesNets(NetsPerCongestedArea& nets_in_congested_edges,
+                              bool vertical);
+  void getCongestionGrid(std::vector<CongestionInformation>& congestionGridV,
+                         std::vector<CongestionInformation>& congestionGridH);
 
   const std::vector<short>& getVerticalCapacities() { return v_capacity_3D_; }
   const std::vector<short>& getHorizontalCapacities() { return h_capacity_3D_; }
@@ -176,6 +175,7 @@ class FastRouteCore
     return max_h_overflow_;
   }
   const std::vector<int>& getMaxVerticalOverflows() { return max_v_overflow_; }
+  std::set<odb::dbNet*> getCongestionNets() { return congestion_nets_; }
 
   // debug mode functions
   void setDebugOn(std::unique_ptr<AbstractFastRouteRenderer> renderer);
@@ -222,8 +222,9 @@ class FastRouteCore
   void convertToMazeroute();
   void updateCongestionHistory(const int upType, bool stopDEC, int& max_adj);
   int getOverflow2D(int* maxOverflow);
-  int getOverflow2Dmaze(int* maxOverflow, int* tUsage);
+  int getOverflow2Dmaze(int* maxOverflow, int* tUsage, bool fillNetsVector);
   int getOverflow3D();
+  void setCongestionNets(int& posX, int& posY, int dir);
   void str_accu(const int rnd);
   void InitLastUsage(const int upType);
   void InitEstUsage();
@@ -451,6 +452,7 @@ class FastRouteCore
   void printTree3D(int netID);
   void check2DEdgesUsage();
   void verify2DEdgesUsage();
+  void verifyEdgeUsage();
   void layerAssignment();
   void copyBR(void);
   void copyRS(void);
@@ -563,6 +565,7 @@ class FastRouteCore
       vertical_blocked_intervals_;
   std::unordered_map<Tile, interval_set<int>, boost::hash<Tile>>
       horizontal_blocked_intervals_;
+  std::set<odb::dbNet*> congestion_nets_;
 };
 
 }  // namespace grt

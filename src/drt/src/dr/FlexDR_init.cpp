@@ -43,14 +43,16 @@ void FlexDRWorker::initNetObjs_pathSeg(
 {
   const auto [begin, end] = pathSeg->getPoints();
   if (begin.x() != end.x() && begin.y() != end.y()) {
+    double dbu = getTech()->getDBUPerUU();
     logger_->error(
         DRT,
         1010,
-        "Unsupported non-orthogonal wire begin=({}, {}) end=({}, {})",
-        begin.x(),
-        begin.y(),
-        end.x(),
-        end.y());
+        "Unsupported non-orthogonal wire begin=({}, {}) end=({}, {}), layer {}",
+        begin.x() / dbu,
+        begin.y() / dbu,
+        end.x() / dbu,
+        end.y() / dbu,
+        getTech()->getLayer(pathSeg->getLayerNum())->getName());
   }
 
   const auto gridBBox = getRouteBox();
@@ -2263,7 +2265,6 @@ void FlexDRWorker::initMazeCost_ap_helper(drNet* net, bool isAddPathCost)
 
 void FlexDRWorker::initMazeCost_ap()
 {
-  int cnt = 0;
   for (auto& net : nets_) {
     for (auto& pin : net->getPins()) {
       for (auto& ap : pin->getAccessPatterns()) {
@@ -2279,12 +2280,6 @@ void FlexDRWorker::initMazeCost_ap()
         if (ap->hasAccessViaDef(frDirEnum::U)) {
           gridGraph_.setSVia(mi.x(), mi.y(), mi.z());
           apSVia_[mi] = ap.get();
-          if (ap->getAccessViaDef()
-              != getTech()
-                     ->getLayer(ap->getBeginLayerNum() + 1)
-                     ->getDefaultViaDef()) {
-            cnt++;
-          }
         }
       }
     }
@@ -3167,22 +3162,18 @@ void FlexDRWorker::initMazeCost_planarTerm(const frDesign* design)
 
 void FlexDRWorker::initMazeCost_connFig()
 {
-  int cnt = 0;
   for (auto& net : nets_) {
     for (auto& connFig : net->getExtConnFigs()) {
       addPathCost(connFig.get());
-      cnt++;
     }
     for (auto& connFig : net->getRouteConnFigs()) {
       addPathCost(connFig.get());
-      cnt++;
     }
     gcWorker_->updateDRNet(net.get());
     gcWorker_->updateGCWorker();
     modEolCosts_poly(gcWorker_->getNet(net->getFrNet()),
                      ModCostType::addRouteShape);
   }
-  // cout <<"init " <<cnt <<" connfig costs" <<endl;
 }
 
 void FlexDRWorker::initMazeCost_via_helper(drNet* net, bool isAddPathCost)

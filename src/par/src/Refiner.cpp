@@ -41,6 +41,8 @@
 
 namespace par {
 
+using utl::PAR;
+
 VertexGain::VertexGain(const int vertex,
                        const int src_block_id,
                        const int destination_block_id,
@@ -58,11 +60,11 @@ HyperedgeGain::HyperedgeGain(const int hyperedge_id,
                              const int destination_part,
                              const float gain,
                              const std::map<int, float>& path_cost)
+    : hyperedge_id_(hyperedge_id),
+      destination_part_(destination_part),
+      gain_(gain),
+      path_cost_(path_cost)
 {
-  hyperedge_id_ = hyperedge_id;
-  destination_part_ = destination_part;
-  gain_ = gain;
-  path_cost_ = path_cost;
 }
 
 Refiner::Refiner(
@@ -88,13 +90,13 @@ Refiner::Refiner(
 
 void Refiner::SetMaxMove(const int max_move)
 {
-  logger_->report("[INFO] Set the max_move to {}", max_move);
+  logger_->info(PAR, 163, "Set the max_move to {}", max_move);
   max_move_ = max_move;
 }
 
 void Refiner::SetRefineIters(const int refiner_iters)
 {
-  logger_->report("[INFO] Set the refiner_iter to {}", refiner_iters);
+  logger_->info(PAR, 164, "Set the refiner_iter to {}", refiner_iters);
   refiner_iters_ = refiner_iters;
 }
 
@@ -102,8 +104,8 @@ void Refiner::RestoreDefaultParameters()
 {
   max_move_ = max_move_default_;
   refiner_iters_ = refiner_iters_default_;
-  logger_->report("[INFO] Reset the max_move to {}", max_move_);
-  logger_->report("[INFO] Reset the refiner_iters to {}", refiner_iters_);
+  logger_->info(PAR, 165, "Reset the max_move to {}", max_move_);
+  logger_->info(PAR, 166, "Reset the refiner_iters to {}", refiner_iters_);
 }
 
 // The main function of refinement class
@@ -114,7 +116,7 @@ void Refiner::Refine(const HGraphPtr& hgraph,
 {
   if (max_move_ <= 0) {
     logger_->report("[PARAMS] max_move = {}", max_move_);
-    logger_->report("[WARNING] Exit Refinement.");
+    logger_->info(PAR, 118, "Exit Refinement.");
     return;
   }
   // calculate the basic statistics of current solution
@@ -122,17 +124,17 @@ void Refiner::Refine(const HGraphPtr& hgraph,
       = evaluator_->GetBlockBalance(hgraph, solution);
   Matrix<int> net_degs = evaluator_->GetNetDegrees(hgraph, solution);
   std::vector<float> cur_paths_cost;
-  if (hgraph->timing_flag_ == true) {
+  if (hgraph->HasTiming()) {
     cur_paths_cost = evaluator_->GetPathsCost(hgraph, solution);
   }
   for (int i = 0; i < refiner_iters_; ++i) {
     // the main function for improving the solution
     // mark the vertices can be moved as unvisited
-    std::vector<bool> visited_vertices_flag(hgraph->num_vertices_, false);
+    std::vector<bool> visited_vertices_flag(hgraph->GetNumVertices(), false);
     // mark all fixed vertices as visited vertices
-    if (hgraph->fixed_vertex_flag_ == true) {
-      for (auto v = 0; v < hgraph->num_vertices_; v++) {
-        if (hgraph->fixed_attr_[v] > -1) {
+    if (hgraph->HasFixedVertices()) {
+      for (auto v = 0; v < hgraph->GetNumVertices(); v++) {
+        if (hgraph->GetFixedAttr(v) > -1) {
           visited_vertices_flag[v] = true;
         }
       }
@@ -168,15 +170,14 @@ float Refiner::CalculatePathCost(int path_id,
 ) const
 {
   float cost = 0.0;  // cost for current path
-  if (hgraph->num_timing_paths_ == 0 || path_id >= hgraph->num_timing_paths_) {
+  if (hgraph->GetNumTimingPaths() == 0
+      || path_id >= hgraph->GetNumTimingPaths()) {
     return cost;  // no timing paths
   }
   // we must use vector here.  Becuase we need to calculate the snaking factor
   std::vector<int> path;             // represent the path in terms of block_id
   std::map<int, int> block_counter;  // block_id counter
-  for (auto idx = hgraph->vptr_p_[path_id]; idx < hgraph->vptr_p_[path_id + 1];
-       ++idx) {
-    const int u = hgraph->vind_p_[idx];  // current vertex
+  for (const int u : hgraph->PathVertices(path_id)) {
     int block_id = solution[u];
     if ((to_pid != -1) && (u == v)) {
       block_id = to_pid;
@@ -195,8 +196,7 @@ float Refiner::CalculatePathCost(int path_id,
     return cost;
   }
   // timing-related cost (basic path_cost * number of cut on the path)
-  cost = path_wt_factor_ * (path.size() - 1)
-         * hgraph->path_timing_cost_[path_id];
+  cost = path_wt_factor_ * (path.size() - 1) * hgraph->PathTimingCost(path_id);
   // get the snaking factor of the path (maximum repetition of block_id - 1)
   int snaking_factor = 0;
   for (auto [block_id, count] : block_counter) {
@@ -216,8 +216,8 @@ std::vector<int> Refiner::FindBoundaryVertices(
     const std::vector<bool>& visited_vertices_flag) const
 {
   // Step 1 : found all the boundary hyperedges
-  std::vector<bool> boundary_net_flag(hgraph->num_hyperedges_, false);
-  for (int e = 0; e < hgraph->num_hyperedges_; e++) {
+  std::vector<bool> boundary_net_flag(hgraph->GetNumHyperedges(), false);
+  for (int e = 0; e < hgraph->GetNumHyperedges(); e++) {
     int num_span_part = 0;
     for (int i = 0; i < num_parts_; i++) {
       if (net_degs[e][i] > 0) {
@@ -231,12 +231,12 @@ std::vector<int> Refiner::FindBoundaryVertices(
   }
   // Step 2: check all the non-fixed vertices
   std::vector<int> boundary_vertices;
-  for (int v = 0; v < hgraph->num_vertices_; v++) {
+  for (int v = 0; v < hgraph->GetNumVertices(); v++) {
     if (visited_vertices_flag[v] == true) {
       continue;  // This vertex has been visited
     }
-    for (int idx = hgraph->vptr_[v]; idx < hgraph->vptr_[v + 1]; idx++) {
-      if (boundary_net_flag[hgraph->vind_[idx]] == true) {
+    for (const int edge_id : hgraph->Edges(v)) {
+      if (boundary_net_flag[edge_id]) {
         boundary_vertices.push_back(v);
         break;
       }
@@ -253,8 +253,8 @@ std::vector<int> Refiner::FindBoundaryVertices(
     const std::pair<int, int>& partition_pair) const
 {
   // Step 1 : found all the boundary hyperedges
-  std::vector<bool> boundary_net_flag(hgraph->num_hyperedges_, false);
-  for (int e = 0; e < hgraph->num_hyperedges_; e++) {
+  std::vector<bool> boundary_net_flag(hgraph->GetNumHyperedges(), false);
+  for (int e = 0; e < hgraph->GetNumHyperedges(); e++) {
     if (net_degs[e][partition_pair.first] > 0
         && net_degs[e][partition_pair.second] > 0) {
       boundary_net_flag[e] = true;
@@ -262,12 +262,12 @@ std::vector<int> Refiner::FindBoundaryVertices(
   }
   // Step 2: check all the non-fixed vertices
   std::vector<int> boundary_vertices;
-  for (int v = 0; v < hgraph->num_vertices_; v++) {
+  for (int v = 0; v < hgraph->GetNumVertices(); v++) {
     if (visited_vertices_flag[v] == true) {
       continue;
     }
-    for (int idx = hgraph->vptr_[v]; idx < hgraph->vptr_[v + 1]; idx++) {
-      if (boundary_net_flag[hgraph->vind_[idx]] == true) {
+    for (const int edge_id : hgraph->Edges(v)) {
+      if (boundary_net_flag[edge_id]) {
         boundary_vertices.push_back(v);
         break;
       }
@@ -283,11 +283,8 @@ std::vector<int> Refiner::FindNeighbors(
     const std::vector<bool>& visited_vertices_flag) const
 {
   std::set<int> neighbors;
-  for (int idx = hgraph->vptr_[vertex_id]; idx < hgraph->vptr_[vertex_id + 1];
-       idx++) {
-    const int e = hgraph->vind_[idx];
-    for (auto v_idx = hgraph->eptr_[e]; v_idx < hgraph->eptr_[e + 1]; v_idx++) {
-      const int v = hgraph->eind_[v_idx];
+  for (const int e : hgraph->Edges(vertex_id)) {
+    for (const int v : hgraph->Vertices(e)) {
       if (visited_vertices_flag[v] == false) {
         // This vertex has not been visited yet
         neighbors.insert(v);
@@ -306,11 +303,8 @@ std::vector<int> Refiner::FindNeighbors(
     const std::pair<int, int>& partition_pair) const
 {
   std::set<int> neighbors;
-  for (int idx = hgraph->vptr_[vertex_id]; idx < hgraph->vptr_[vertex_id + 1];
-       idx++) {
-    const int e = hgraph->vind_[idx];
-    for (auto v_idx = hgraph->eptr_[e]; v_idx < hgraph->eptr_[e + 1]; v_idx++) {
-      const int v = hgraph->eind_[v_idx];
+  for (const int e : hgraph->Edges(vertex_id)) {
+    for (const int v : hgraph->Vertices(e)) {
       if (visited_vertices_flag[v] == false
           && (solution[v] == partition_pair.first
               || solution[v] == partition_pair.second)) {
@@ -366,10 +360,7 @@ GainCell Refiner::CalculateVertexGain(int v,
     return connectivity;
   };
   // traverse all the hyperedges connected to v
-  const int first_valid_entry = hgraph->vptr_[v];
-  const int first_invalid_entry = hgraph->vptr_[v + 1];
-  for (auto e_idx = first_valid_entry; e_idx < first_invalid_entry; e_idx++) {
-    const int e = hgraph->vind_[e_idx];  // hyperedge id
+  for (const int e : hgraph->Edges(v)) {
     const int connectivity = GetConnectivity(e);
     const float e_score = evaluator_->CalculateHyperedgeCost(e, hgraph);
     if (connectivity == 0) {
@@ -389,10 +380,8 @@ GainCell Refiner::CalculateVertexGain(int v,
     }
   }
   // check the timing path
-  if (hgraph->num_timing_paths_ > 0) {
-    for (auto p_idx = hgraph->pptr_v_[v]; p_idx < hgraph->pptr_v_[v + 1];
-         ++p_idx) {
-      const int path_id = hgraph->pind_v_[p_idx];
+  if (hgraph->GetNumTimingPaths() > 0) {
+    for (const int path_id : hgraph->TimingPathsThrough(v)) {
       // Get updated path costs if vertex is moved to a different partition
       const float cost
           = CalculatePathCost(path_id, hgraph, solution, v, to_pid);
@@ -430,14 +419,11 @@ void Refiner::AcceptVertexGain(const GainCell& gain_cell,
   solution[vertex_id] = new_part_id;
   // Update the partition balance
   curr_block_balance[pre_part_id]
-      = curr_block_balance[pre_part_id] - hgraph->vertex_weights_[vertex_id];
+      = curr_block_balance[pre_part_id] - hgraph->GetVertexWeights(vertex_id);
   curr_block_balance[new_part_id]
-      = curr_block_balance[new_part_id] + hgraph->vertex_weights_[vertex_id];
+      = curr_block_balance[new_part_id] + hgraph->GetVertexWeights(vertex_id);
   // update net_degs
-  const int first_valid_entry = hgraph->vptr_[vertex_id];
-  const int first_invalid_entry = hgraph->vptr_[vertex_id + 1];
-  for (int idx = first_valid_entry; idx < first_invalid_entry; ++idx) {
-    const int he = hgraph->vind_[idx];  // hyperedge id
+  for (const int he : hgraph->Edges(vertex_id)) {
     --net_degs[he][pre_part_id];
     ++net_degs[he][new_part_id];
   }
@@ -465,14 +451,11 @@ void Refiner::RollBackVertexGain(const GainCell& gain_cell,
   solution[vertex_id] = pre_part_id;
   // Update the partition balance
   curr_block_balance[pre_part_id]
-      = curr_block_balance[pre_part_id] + hgraph->vertex_weights_[vertex_id];
+      = curr_block_balance[pre_part_id] + hgraph->GetVertexWeights(vertex_id);
   curr_block_balance[new_part_id]
-      = curr_block_balance[new_part_id] - hgraph->vertex_weights_[vertex_id];
+      = curr_block_balance[new_part_id] - hgraph->GetVertexWeights(vertex_id);
   // update net_degs
-  const int first_valid_entry = hgraph->vptr_[vertex_id];
-  const int first_invalid_entry = hgraph->vptr_[vertex_id + 1];
-  for (int idx = first_valid_entry; idx < first_invalid_entry; ++idx) {
-    const int he = hgraph->vind_[idx];  // hyperedge id
+  for (const int he : hgraph->Edges(vertex_id)) {
     ++net_degs[he][pre_part_id];
     --net_degs[he][new_part_id];
   }
@@ -490,9 +473,9 @@ bool Refiner::CheckVertexMoveLegality(
     const Matrix<float>& lower_block_balance) const
 {
   const std::vector<float> total_wt_to_block
-      = curr_block_balance[to_pid] + hgraph->vertex_weights_[v];
+      = curr_block_balance[to_pid] + hgraph->GetVertexWeights(v);
   const std::vector<float> total_wt_from_block
-      = curr_block_balance[from_pid] - hgraph->vertex_weights_[v];
+      = curr_block_balance[from_pid] - hgraph->GetVertexWeights(v);
   return total_wt_to_block <= upper_block_balance[to_pid]
          && lower_block_balance[from_pid] <= total_wt_from_block;
 }
@@ -521,16 +504,10 @@ HyperedgeGainPtr Refiner::CalculateHyperedgeGain(
   std::vector<std::pair<int, int>> vertices;  // vertex_id, from_pid
   // We need to modify these net degrees
   std::map<int, std::vector<int>> net_deg_map;
-  for (int idx = hgraph->eptr_[hyperedge_id];
-       idx < hgraph->eptr_[hyperedge_id + 1];
-       idx++) {
-    const int vertex_id = hgraph->eind_[idx];
+  for (const int vertex_id : hgraph->Vertices(hyperedge_id)) {
     if (solution[vertex_id] != to_pid) {
       vertices.emplace_back(vertex_id, solution[vertex_id]);
-      for (int idx = hgraph->vptr_[vertex_id];
-           idx < hgraph->vptr_[vertex_id + 1];
-           idx++) {
-        const int e = hgraph->vind_[idx];
+      for (const int e : hgraph->Edges(vertex_id)) {
         if (net_deg_map.find(e) == net_deg_map.end()) {
           net_deg_map[e] = net_degs[e];
         }
@@ -559,10 +536,7 @@ HyperedgeGainPtr Refiner::CalculateHyperedgeGain(
     const int v = vertex_pair.first;
     const int from_pid = vertex_pair.second;
     // traverse all the hyperedges connected to v
-    const int first_valid_entry = hgraph->vptr_[v];
-    const int first_invalid_entry = hgraph->vptr_[v + 1];
-    for (auto e_idx = first_valid_entry; e_idx < first_invalid_entry; e_idx++) {
-      const int e = hgraph->vind_[e_idx];  // hyperedge id
+    for (const int e : hgraph->Edges(v)) {
       const int connectivity = GetConnectivity(e);
       const float e_score = evaluator_->CalculateHyperedgeCost(e, hgraph);
       if (connectivity == 0) {
@@ -585,16 +559,14 @@ HyperedgeGainPtr Refiner::CalculateHyperedgeGain(
     }
   }
   // Step 2: check timing cost
-  if (hgraph->num_timing_paths_ > 0) {
+  if (hgraph->GetNumTimingPaths() > 0) {
     // update the solution to to_pid
     for (const auto& vertex_pair : vertices) {
       solution[vertex_pair.first] = to_pid;
     }
     for (const auto& vertex_pair : vertices) {
       const int v = vertex_pair.first;
-      for (auto p_idx = hgraph->pptr_v_[v]; p_idx < hgraph->pptr_v_[v + 1];
-           ++p_idx) {
-        const int path_id = hgraph->pind_v_[p_idx];
+      for (const int path_id : hgraph->TimingPathsThrough(v)) {
         if (delta_path_cost.find(path_id) == delta_path_cost.end()) {
           // Get updated path costs if vertex is moved to a different partition
           const float cost
@@ -634,10 +606,7 @@ void Refiner::AcceptHyperedgeGain(const HyperedgeGainPtr& hyperedge_gain,
   // get block id
   const int new_part_id = hyperedge_gain->GetDestinationPart();
   // update the solution vector block_balance and net_degs
-  for (int idx = hgraph->eptr_[hyperedge_id];
-       idx < hgraph->eptr_[hyperedge_id + 1];
-       idx++) {
-    const int vertex_id = hgraph->eind_[idx];
+  for (const int vertex_id : hgraph->Vertices(hyperedge_id)) {
     const int pre_part_id = solution[vertex_id];
     if (pre_part_id == new_part_id) {
       continue;  // the vertex is in current block
@@ -646,15 +615,12 @@ void Refiner::AcceptHyperedgeGain(const HyperedgeGainPtr& hyperedge_gain,
     solution[vertex_id] = new_part_id;
     // Update the partition balance
     cur_block_balance[pre_part_id]
-        = cur_block_balance[pre_part_id] - hgraph->vertex_weights_[vertex_id];
+        = cur_block_balance[pre_part_id] - hgraph->GetVertexWeights(vertex_id);
     cur_block_balance[new_part_id]
-        = cur_block_balance[new_part_id] + hgraph->vertex_weights_[vertex_id];
+        = cur_block_balance[new_part_id] + hgraph->GetVertexWeights(vertex_id);
     // update net_degs
     // not just this hyperedge, we need to update all the related hyperedges
-    const int first_valid_entry = hgraph->vptr_[vertex_id];
-    const int first_invalid_entry = hgraph->vptr_[vertex_id + 1];
-    for (int i = first_valid_entry; i < first_invalid_entry; ++i) {
-      const int he = hgraph->vind_[i];  // hyperedge id
+    for (const int he : hgraph->Edges(vertex_id)) {
       --net_degs[he][pre_part_id];
       ++net_degs[he][new_part_id];
     }
@@ -671,19 +637,17 @@ bool Refiner::CheckHyperedgeMoveLegality(
     const Matrix<float>& lower_block_balance) const
 {
   Matrix<float> update_block_balance = curr_block_balance;
-  for (int idx = hgraph->eptr_[e]; idx < hgraph->eptr_[e + 1]; ++idx) {
-    const int v = hgraph->eind_[idx];
+  for (const int v : hgraph->Vertices(e)) {
     // check if satisfies the fixed vertices constraint
-    if (hgraph->fixed_vertex_flag_ == true
-        && hgraph->fixed_attr_[v] != to_pid) {
+    if (hgraph->HasFixedVertices() && hgraph->GetFixedAttr(v) != to_pid) {
       return false;  // violate the fixed vertices constraint
     }
     const int pid = solution[v];
     if (solution[v] != to_pid) {
       update_block_balance[to_pid]
-          = update_block_balance[to_pid] + hgraph->vertex_weights_[v];
+          = update_block_balance[to_pid] + hgraph->GetVertexWeights(v);
       update_block_balance[pid]
-          = update_block_balance[pid] - hgraph->vertex_weights_[v];
+          = update_block_balance[pid] - hgraph->GetVertexWeights(v);
     }
   }
   // Violate the upper bound

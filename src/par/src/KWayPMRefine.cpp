@@ -32,12 +32,10 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //
 ///////////////////////////////////////////////////////////////////////////////
+#include "KWayPMRefine.h"
+
 #include <thread>
 
-#include "Hypergraph.h"
-#include "Refiner.h"
-#include "Utilities.h"
-#include "utl/Logger.h"
 // ------------------------------------------------------------------------------
 // K-way pair-wise FM refinement
 // ------------------------------------------------------------------------------
@@ -80,9 +78,9 @@ float KWayPMRefine::Pass(
   // initialize the gain buckets
   GainBuckets buckets;
   for (int i = 0; i < num_parts_; ++i) {
-    // the maxinum size of each bucket is hgraph->num_vertices_
+    // the maxinum size of each bucket is hgraph->GetNumVertices()
     auto bucket = std::make_shared<PriorityQueue>(
-        hgraph->num_vertices_, total_corking_passes_, hgraph);
+        hgraph->GetNumVertices(), total_corking_passes_, hgraph);
     buckets.push_back(bucket);
   }
   for (const auto& partition_pair : maximum_matches) {
@@ -142,9 +140,9 @@ evaluator_->GetMatchingConnectivity(hgraph, solution);
   // initialize the gain buckets
   GainBuckets buckets;
   for (int i = 0; i < num_parts_; ++i) {
-    // the maxinum size of each bucket is hgraph->num_vertices_
+    // the maxinum size of each bucket is hgraph->GetNumVertices()
     GainBucket bucket
-        = std::make_shared<PriorityQueue>(hgraph->num_vertices_,
+        = std::make_shared<PriorityQueue>(hgraph->GetNumVertices(),
                                           total_corking_passes_,
                                           hgraph);
     buckets.push_back(bucket);

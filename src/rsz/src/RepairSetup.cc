@@ -526,7 +526,7 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
             }
             else {
                 if (buffer_chain.size() > 1) {
-                  //printf("Found a chain of length %lu\n", buffer_chain.size());
+                  printf("Found a chain of length %lu\n", buffer_chain.size());
                   buffer_chains.push_back(buffer_chain);
                 }
                 buffer_chain.clear();

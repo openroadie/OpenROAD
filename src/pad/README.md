@@ -12,7 +12,9 @@ make_io_sites -horizontal_site site \
               -vertical_site site \
               -corner_site site \
               -offset offset \
-              [-rotation rotation] \
+              [-rotation_horizontal rotation] \
+              [-rotation_vertical rotation] \
+              [-rotation_corner rotation] \
               [-ring_index index]
 ```
 
@@ -24,13 +26,15 @@ make_io_sites -horizontal_site site \
 | `-vertical_site` | Name of the site for the vertical pads (north and south). |
 | `-corner_site` | Name of the site for the corner cells. |
 | `-offset` | Offset from the die edge to place the rows. |
-| `-rotation` | Rotation to apply to the sites to ensure pads are placed correctly (defaults to R0). |
+| `-rotation_horizontal` | Rotation to apply to the horizontal sites to ensure pads are placed correctly (defaults to R0). |
+| `-rotation_vertical` | Rotation to apply to the vertical sites to ensure pads are placed correctly (defaults to R0). |
+| `-rotation_corner` | Rotation to apply to the corner sites to ensure pads are placed correctly (defaults to R0). |
 | `-ring_index` | (Optional) Used to specify the index of the ring in case of multiple rings. |
 
 #### Examples
 ```
 make_io_sites -horizontal_site IOSITE_H -vertical_site IOSITE_V -corner_site IOSITE_C -offset 35
-make_io_sites -horizontal_site IOSITE_H -vertical_site IOSITE_V -corner_site IOSITE_C -offset 35 -rotation R180
+make_io_sites -horizontal_site IOSITE_H -vertical_site IOSITE_V -corner_site IOSITE_C -offset 35 -rotation_horizontal R180
 ```
 
 ### Creating False IO Sites
@@ -234,6 +238,7 @@ remove_io_bump instance_name
 To assign a net to a bump
 ```
 assign_io_bump -net net \
+               [-terminal iterm] \
                instance
 ```
 
@@ -242,6 +247,7 @@ assign_io_bump -net net \
 | Switch Name | Description |
 | ----- | ----- |
 | `-net` | Net to connect to |
+| `-terminal` | Instance terminal to route to |
 | `instance` | Name of the bump |
 
 #### Examples
@@ -250,6 +256,7 @@ assign_io_bump -net p_ddr_addr_9_o BUMP_6_0
 assign_io_bump -net p_ddr_addr_8_o BUMP_6_2
 assign_io_bump -net DVSS BUMP_6_4
 assign_io_bump -net DVDD BUMP_7_3
+assign_io_bump -net DVDD -terminal u_dvdd/DVDD BUMP_8_3
 assign_io_bump -net p_ddr_addr_7_o BUMP_7_1
 assign_io_bump -net p_ddr_addr_6_o BUMP_7_0
 ```
@@ -263,6 +270,7 @@ route_rdl -layer layer \
           [-pad_via via] \
           [-width width] \
           [-spacing spacing] \
+          [-turn_penalty penalty] \
           [-allow45] \
           nets
 ```
@@ -276,6 +284,7 @@ route_rdl -layer layer \
 | `-pad_via` | Via to use to to connect the pad cell to the routing layer |
 | `-width` | Width of the routing (defaults to minimum width) |
 | `-spacing` | Spacing of the routing (defaults to minimum spacing) |
+| `-turn_penalty` | Scaling factor to apply to discurage turning to allow for straighter routes (defaults to 2.0) |
 | `-allow45` | Specifies that 45 degree routing is permitted |
 | `nets` | Nets to route |
 

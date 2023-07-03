@@ -36,6 +36,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <string>
 
 #include "utl/Logger.h"
@@ -318,11 +319,11 @@ public:
   void findResizeSlacks();
   // Return nets with worst slack.
   NetSeq &resizeWorstSlackNets();
-  // Return net slack.
-  Slack resizeNetSlack(const Net *net);
+  // Return net slack, if any (indicated by the bool).
+  std::optional<Slack> resizeNetSlack(const Net *net);
   // db flavor
   vector<dbNet*> resizeWorstSlackDbNets();
-  Slack resizeNetSlack(const dbNet *db_net);
+  std::optional<Slack> resizeNetSlack(const dbNet *db_net);
 
   ////////////////////////////////////////////////////////////////
   // API for logic resynthesis

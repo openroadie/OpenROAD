@@ -22,6 +22,18 @@ record_tests {
   add_constraint_error5
   add_constraint_error6
   annealing1
+  annealing2
+  annealing3
+  annealing_constraint1
+  annealing_constraint2
+  annealing_constraint3
+  annealing_constraint4
+  annealing_constraint5
+  annealing_constraint6
+  annealing_constraint7
+  annealing_constraint8
+  annealing_large_groups1
+  annealing_large_groups2
   blocked_region
   cells_not_placed
   exclude1
@@ -38,6 +50,7 @@ record_tests {
   group_pins8
   group_pins9
   group_pins10
+  group_pins_error1
   group_pins_warn1
   invalid_layer
   large_groups1

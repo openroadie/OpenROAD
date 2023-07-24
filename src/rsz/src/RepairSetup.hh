@@ -102,8 +102,9 @@ private:
                    bool skip_gate_cloning);
   //============================================================================
   // All the experimental code not ready for production
-  void debugCheckMultipleBuffers(PathRef &path,
-                                 PathExpanded *expanded);
+  LibertyCell *bufferForInverter(LibertyCell *buffer);
+  bool replaceBuffers(vector<std::tuple<LibertyCell *, sta::Instance *>> &buffer_chain);
+
   bool generatePairedBufferReport(PathRef *drvr_path, int drvr_index,
                                   PathExpanded *expanded);
   //============================================================================

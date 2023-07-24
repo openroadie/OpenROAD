@@ -404,7 +404,7 @@ RepairSetup::repairSetup(PathRef &path,
       }
 
       // Debug code
-      generatePairedBufferReport(drvr_path, drvr_index, &expanded);
+      // generatePairedBufferReport(drvr_path, drvr_index, &expanded);
 
       // Pin swapping 
       if (!skip_pin_swap) {
@@ -458,26 +458,47 @@ RepairSetup::repairSetup(PathRef &path,
   return changed;
 }
 
-void RepairSetup::debugCheckMultipleBuffers(PathRef &path,
-                                            PathExpanded *expanded)
-{
-    if (expanded->size() > 1) {
-        int path_length = expanded->size();
-        int start_index = expanded->startIndex();
-        for (int i = start_index; i < path_length; i++) {
-            PathRef* path = expanded->path(i);
-            const Pin* path_pin = path->pin(sta_);
-            if (i > 0 && network_->isDriver(path_pin)
-                && !network_->isTopLevelPort(path_pin)) {
-                TimingArc* prev_arc = expanded->prevArc(i);
-                printf("repair_setup %s: %s ---> %s \n",
-                       prev_arc->from()->libertyCell()->name(),
-                       prev_arc->from()->name(),
-                       prev_arc->to()->name());
-            }
+LibertyCell *RepairSetup::bufferForInverter(LibertyCell *buffer) {
+    int index = 0;
+    for (auto iter : resizer_->buffer_cells_) {
+        if (buffer == iter) {
+          break;
         }
+        index++;
     }
-    printf("done\n");
+    return (resizer_->inverter_cells_[index]);
+}
+
+bool RepairSetup::replaceBuffers(
+    vector<std::tuple<LibertyCell*, Instance*>>& buffer_chain)
+{
+    int count = buffer_chain.size();
+    int iter = 0;
+    int swap_made = false;
+
+    for (iter = 0; iter < count; ++iter) {
+        if (iter + 1 < count) {
+          auto cell_inst_tuple0 = buffer_chain[iter];
+          auto cell_inst_tuple1 = buffer_chain[iter + 1];
+          LibertyCell *new_cell0, *lib_cell0 = std::get<0>(cell_inst_tuple0);
+          Instance* inst0 = std::get<1>(cell_inst_tuple0);
+          LibertyCell *new_cell1, *lib_cell1 = std::get<0>(cell_inst_tuple1);
+          Instance* inst1 = std::get<1>(cell_inst_tuple1);
+          if (!resizer_->dontTouch(inst0) && !resizer_->dontTouch(inst1)) {
+            // Get the cell
+            new_cell0 = bufferForInverter(lib_cell0);
+            new_cell1 = bufferForInverter(lib_cell1);
+
+            resizer_->replaceCell(inst0, new_cell0, true);
+            resizer_->replaceCell(inst1, new_cell1, true);
+            printf(".");
+            fflush(stdout);
+            swap_made = true;
+          }
+        }
+        iter += 2;
+    }
+    return swap_made;
 }
 
 bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
@@ -533,6 +554,9 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
                 }
             }
             else {
+                // This is where we were done with the chain part.
+                // So we can make a decision about replacing the cells.
+                // and use the same undo mechanism as the rest of the transforms
                 if (buffer_chain.size() > 1) {
                   printf("Found a chain of length %lu\n", buffer_chain.size());
                   buffer_chains.push_back(buffer_chain);
@@ -542,7 +566,14 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
             }
         }
     }
-
+    if (buffer_chains.size() > 0) {
+        printf("Found %lu chains\n", buffer_chains.size());
+        for (auto chain : buffer_chains) {
+          if (chain.size() > 2) {
+                replaceBuffers(chain);
+          }
+        }
+    }
     //printf("2XXXXQAAAAA The path has %d elements\n", count);
     return false;
 }

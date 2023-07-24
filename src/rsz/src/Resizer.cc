@@ -394,37 +394,9 @@ Resizer::ensureLevelDrvrVertices()
   }
 }
 
-void Resizer::findInverters()
-{
-  if (inverter_cells_.empty()) {
-    LibertyLibraryIterator* lib_iter = network_->libertyLibraryIterator();
-    while (lib_iter->hasNext()) {
-      LibertyLibrary* lib = lib_iter->next();
-      for (LibertyCell* inverter : *lib->buffers()) {
-        if (!dontUse(inverter) && isLinkCell(inverter)) {
-          inverter_cells_.push_back(inverter);
-        }
-      }
-    }
-    delete lib_iter;
-
-    if (inverter_cells_.empty())
-      logger_->error(RSZ, 23, "no inverters found.");
-    else {
-      sort(inverter_cells_,
-           [this](const LibertyCell* inverter1, const LibertyCell* inverter2) {
-             return bufferDriveResistance(inverter1)
-                    > bufferDriveResistance(inverter2);
-           });
-      inverter_lowest_drive_ = inverter_cells_[0];
-    }
-  }
-}
-
 ////////////////////////////////////////////////////////////////
-
 void
-Resizer::findBuffers()
+Resizer::findBuffersAndInverters()
 {
   if (buffer_cells_.empty()) {
     LibertyLibraryIterator *lib_iter = network_->libertyLibraryIterator();
@@ -434,6 +406,12 @@ Resizer::findBuffers()
         if (!dontUse(buffer)
             && isLinkCell(buffer)) {
           buffer_cells_.push_back(buffer);
+        }
+      }
+      for (LibertyCell *inverter : *lib->inverters()) {
+        if (!dontUse(inverter)
+            && isLinkCell(inverter)) {
+          inverter_cells_.push_back(inverter);
         }
       }
     }
@@ -448,6 +426,15 @@ Resizer::findBuffers()
           > bufferDriveResistance(buffer2);
       });
       buffer_lowest_drive_ = buffer_cells_[0];
+    }
+
+    if (!inverter_cells_.empty()) {
+      sort(inverter_cells_, [this] (const LibertyCell *inverter1,
+                                    const LibertyCell *inverter2) {
+        return bufferDriveResistance(inverter1)
+               > bufferDriveResistance(inverter2);
+      });
+      inverter_lowest_drive_ = inverter_cells_[0];
     }
   }
 }
@@ -464,7 +451,7 @@ void
 Resizer::bufferInputs()
 {
   init();
-  findBuffers();
+  findBuffersAndInverters();
   sta_->ensureClkNetwork();
   inserted_buffer_count_ = 0;
   buffer_moved_into_core_ = false;
@@ -591,7 +578,7 @@ void
 Resizer::bufferOutputs()
 {
   init();
-  findBuffers();
+  findBuffersAndInverters();
   inserted_buffer_count_ = 0;
   buffer_moved_into_core_ = false;
 
@@ -919,7 +906,7 @@ Resizer::resizePreamble()
   ensureLevelDrvrVertices();
   sta_->ensureClkNetwork();
   makeEquivCells();
-  findBuffers();
+  findBuffersAndInverters();
   findTargetLoads();
 }
 
@@ -2195,7 +2182,7 @@ double
 Resizer::findMaxWireLength()
 {
   init();
-  findBuffers();
+  findBuffersAndInverters();
   findTargetLoads();
   return findMaxWireLength1();
 }

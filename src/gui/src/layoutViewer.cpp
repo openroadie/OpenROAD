@@ -247,7 +247,9 @@ Rect LayoutViewer::getBounds() const
 
   Rect die = block_->getDieArea();
 
-  bbox.merge(die);
+  Rect visible(0, 0, die.xMax(), die.yMax());
+
+  bbox.merge(visible);
 
   return bbox;
 }
@@ -877,7 +879,7 @@ void LayoutViewer::selectAt(odb::Rect region, std::vector<Selected>& selections)
     }
   }
 
-  // Look for an instance since no shape was found
+  // Look for instances and ITerms
   auto insts = search_.searchInsts(block_,
                                    region.xMin(),
                                    region.yMin(),
@@ -889,6 +891,12 @@ void LayoutViewer::selectAt(odb::Rect region, std::vector<Selected>& selections)
     if (options_->isInstanceVisible(inst)
         && options_->isInstanceSelectable(inst)) {
       selections.push_back(gui_->makeSelected(inst));
+      for (auto iterm : inst->getITerms()) {
+        Rect iterm_bbox = iterm->getBBox();
+        if (region.intersects(iterm_bbox)) {
+          selections.push_back(gui_->makeSelected(iterm));
+        }
+      }
     }
   }
 
@@ -1259,7 +1267,11 @@ void LayoutViewer::boxesByLayer(dbMaster* master, LayerBoxes& boxes)
               continue;
             }
             via_transform.apply(box_rect);
-            boxes[layer].mterms.emplace_back(box_to_qrect(via_box));
+            boxes[layer].mterms.emplace_back(
+                QRect{box_rect.xMin(),
+                      box_rect.yMin(),
+                      box_rect.xMax() - box_rect.xMin(),
+                      box_rect.yMax() - box_rect.yMin()});
           }
         } else {
           dbTechLayer* layer = box->getTechLayer();

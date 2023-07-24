@@ -429,7 +429,10 @@ NetRouteMap GlobalRouter::findRouting(std::vector<Net*>& nets,
 {
   NetRouteMap routes;
   if (!nets.empty()) {
+    MakeWireParasitics builder(logger_, resizer_, sta_, db_->getTech(), this);
+    fastroute_->setMakeWireParasiticsBuilder(&builder);
     routes = fastroute_->run();
+    fastroute_->setMakeWireParasiticsBuilder(nullptr);
     addRemainingGuides(routes, nets, min_routing_layer, max_routing_layer);
     connectPadPins(routes);
     for (auto& net_route : routes) {
@@ -818,6 +821,7 @@ void GlobalRouter::initNets(std::vector<Net*>& nets)
   }
 
   if (critical_nets_percentage_ != 0) {
+    fastroute_->setUpdateSlack(critical_nets_percentage_);
     computeNetSlacks();
   }
 
@@ -1651,15 +1655,14 @@ void GlobalRouter::updateDbCongestionFromGuides()
 {
   auto block = db_->getChip()->getBlock();
   auto db_gcell = block->getGCellGrid();
-  if (db_gcell)
-    db_gcell->resetGrid();
-  else
+  if (db_gcell == nullptr) {
     db_gcell = odb::dbGCellGrid::create(block);
+    db_gcell->addGridPatternX(
+        grid_->getXMin(), grid_->getXGrids(), grid_->getTileSize());
+    db_gcell->addGridPatternY(
+        grid_->getYMin(), grid_->getYGrids(), grid_->getTileSize());
+  }
 
-  db_gcell->addGridPatternX(
-      grid_->getXMin(), grid_->getXGrids(), grid_->getTileSize());
-  db_gcell->addGridPatternY(
-      grid_->getYMin(), grid_->getYGrids(), grid_->getTileSize());
   auto db_tech = db_->getTech();
   for (int k = 0; k < grid_->getNumLayers(); k++) {
     auto layer = db_tech->findRoutingLayer(k + 1);

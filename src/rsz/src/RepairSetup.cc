@@ -459,14 +459,24 @@ RepairSetup::repairSetup(PathRef &path,
 }
 
 LibertyCell *RepairSetup::bufferForInverter(LibertyCell *buffer) {
-    int index = 0;
-    for (auto iter : resizer_->buffer_cells_) {
-        if (buffer == iter) {
-          break;
-        }
-        index++;
+
+    /*resizer_->findTargetCell(LibertyCell *cell,
+                          float load_cap,
+                          bool revisiting_inst)
+    */
+    float drive = resizer_->bufferDriveResistance(buffer);
+    for (auto cell: resizer_->inverter_cells_) {
+      if (resizer_->bufferDriveResistance(cell) < drive
+        // && meetsSizeCriteria(buffer, cell,true)
+        ) {
+        printf("X %s %s\n", buffer->name(), cell->name());
+        return cell;
+      }
     }
-    return (resizer_->inverter_cells_[index]);
+    int count = resizer_->inverter_cells_.size();
+    auto cell = resizer_->inverter_cells_[count-1];
+    printf("Y %s %s\n", buffer->name(), cell->name());
+    return cell;
 }
 
 bool RepairSetup::replaceBuffers(
@@ -488,12 +498,14 @@ bool RepairSetup::replaceBuffers(
             // Get the cell
             new_cell0 = bufferForInverter(lib_cell0);
             new_cell1 = bufferForInverter(lib_cell1);
-
             resizer_->replaceCell(inst0, new_cell0, true);
             resizer_->replaceCell(inst1, new_cell1, true);
-            printf(".");
             fflush(stdout);
             swap_made = true;
+          }
+          else {
+            printf("AAAA: Don't touch triggered\n");
+            fflush(stdout);
           }
         }
         iter += 2;
@@ -517,13 +529,10 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
     PathRef *path;
     Pin *pin;
     Instance *drvr;
-    int count = expanded->size();//startPrevArc();
     LibertyPort *in = nullptr;
     LibertyPort *out = nullptr;
     LibertyCell *cell = nullptr;
     bool have_buffer = false;
-    //printf("1XXXXQAAAAA The path has %d elements\n", count);
-
     vector<vector<std::tuple<LibertyCell *, Instance *>>> buffer_chains;
     vector<std::tuple<LibertyCell *, Instance *>> buffer_chain;
 
@@ -546,11 +555,11 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
         if (cell != nullptr) {
             if (cell->isBuffer()) {
                 if (!have_buffer) {
-                  buffer_chain.push_back(std::make_tuple(cell, drvr));
+                  buffer_chain.push_back(std::make_tuple(cell, drvr)); // pin ??
                   have_buffer = true;
                 }
                 else {
-                  buffer_chain.push_back(std::make_tuple(cell, drvr));
+                  buffer_chain.push_back(std::make_tuple(cell, drvr)); // pin?
                 }
             }
             else {
@@ -558,7 +567,7 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
                 // So we can make a decision about replacing the cells.
                 // and use the same undo mechanism as the rest of the transforms
                 if (buffer_chain.size() > 1) {
-                  printf("Found a chain of length %lu\n", buffer_chain.size());
+                  //printf("Found a chain of length %lu\n", buffer_chain.size());
                   buffer_chains.push_back(buffer_chain);
                 }
                 buffer_chain.clear();
@@ -567,14 +576,13 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
         }
     }
     if (buffer_chains.size() > 0) {
-        printf("Found %lu chains\n", buffer_chains.size());
+        //printf("Found %lu chains\n", buffer_chains.size());
         for (auto chain : buffer_chains) {
-          if (chain.size() > 2) {
+          if (chain.size() >= 2) {
                 replaceBuffers(chain);
           }
         }
     }
-    //printf("2XXXXQAAAAA The path has %d elements\n", count);
     return false;
 }
 
@@ -590,7 +598,6 @@ bool RepairSetup::swapPins(PathRef *drvr_path,
     int in_index = drvr_index - 1;
     PathRef *in_path = expanded->path(in_index);
     Pin *in_pin = in_path->pin(sta_);
-
 
     if (!resizer_->dontTouch(drvr)) {
         // We get the driver port and the cell for that port.

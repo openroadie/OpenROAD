@@ -1,7 +1,8 @@
-///////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+//
 // BSD 3-Clause License
 //
-// Copyright (c) 2019, Nefelus Inc
+// Copyright (c) 2023, The Regents of the University of California
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -29,38 +30,42 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
-#include "wOrder.h"
+#pragma once
 
-#include "db.h"
-#include "tmg_conn.h"
+#include "SimulatedAnnealing.h"
+#include "gui/gui.h"
+#include "ppl/AbstractIOPlacerRenderer.h"
+#include "ppl/IOPlacer.h"
 
-namespace odb {
+namespace ppl {
 
-static tmg_conn* conn = nullptr;
-
-void orderWires(utl::Logger* logger, dbBlock* block)
+class IOPlacerRenderer : public gui::Renderer, public AbstractIOPlacerRenderer
 {
-  if (conn == nullptr) {
-    conn = new tmg_conn(logger);
-  }
-  for (auto net : block->getNets()) {
-    if (net->getSigType().isSupply() || net->isWireOrdered()) {
-      continue;
-    }
-    conn->analyzeNet(net);
-  }
-}
+ public:
+  IOPlacerRenderer();
+  ~IOPlacerRenderer() override;
+  void setCurrentIteration(const int& current_iteration) override;
+  void setPaintingInterval(const int& painting_interval) override;
+  void setPinAssignment(const std::vector<IOPin>& assignment) override;
+  void setSinks(const std::vector<std::vector<InstancePin>>& sinks) override;
+  void setIsNoPauseMode(const bool& is_no_pause_mode) override;
 
-void orderWires(utl::Logger* logger, dbNet* net)
-{
-  if (conn == nullptr) {
-    conn = new tmg_conn(logger);
-  }
-  if (net->getSigType().isSupply()) {
-    return;
-  }
-  conn->analyzeNet(net);
-}
+  void redrawAndPause() override;
 
-}  // namespace odb
+  void drawObjects(gui::Painter& painter) override;
+
+ private:
+  bool isDrawingNeeded() const;
+
+  std::vector<ppl::IOPin> pin_assignment_;
+  std::vector<std::vector<InstancePin>> sinks_;
+
+  int painting_interval_;
+  int current_iteration_;
+  bool is_no_pause_mode_;
+};
+
+}  // namespace ppl

@@ -1,7 +1,8 @@
-///////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+//
 // BSD 3-Clause License
 //
-// Copyright (c) 2019, Nefelus Inc
+// Copyright (c) 2023, The Regents of the University of California
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -29,38 +30,27 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
-#include "wOrder.h"
+#pragma once
 
-#include "db.h"
-#include "tmg_conn.h"
+#include "Netlist.h"
 
-namespace odb {
+namespace ppl {
 
-static tmg_conn* conn = nullptr;
-
-void orderWires(utl::Logger* logger, dbBlock* block)
+class AbstractIOPlacerRenderer
 {
-  if (conn == nullptr) {
-    conn = new tmg_conn(logger);
-  }
-  for (auto net : block->getNets()) {
-    if (net->getSigType().isSupply() || net->isWireOrdered()) {
-      continue;
-    }
-    conn->analyzeNet(net);
-  }
-}
+ public:
+  virtual ~AbstractIOPlacerRenderer() = default;
 
-void orderWires(utl::Logger* logger, dbNet* net)
-{
-  if (conn == nullptr) {
-    conn = new tmg_conn(logger);
-  }
-  if (net->getSigType().isSupply()) {
-    return;
-  }
-  conn->analyzeNet(net);
-}
+  virtual void setCurrentIteration(const int& current_iteration) = 0;
+  virtual void setPaintingInterval(const int& painting_interval) = 0;
+  virtual void setPinAssignment(const std::vector<IOPin>& assignment) = 0;
+  virtual void setSinks(const std::vector<std::vector<InstancePin>>& sinks) = 0;
+  virtual void setIsNoPauseMode(const bool& is_no_pause_mode) = 0;
 
-}  // namespace odb
+  virtual void redrawAndPause() = 0;
+};
+
+}  // namespace ppl

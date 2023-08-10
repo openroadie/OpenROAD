@@ -630,6 +630,7 @@ void io::Parser::setNets(odb::dbBlock* block)
     string shape = "";
     bool hasBeginPoint = false;
     bool hasEndPoint = false;
+    bool orthogonal_conn = false;
     bool beginInVia = false;
     frCoord beginX = -1;
     frCoord beginY = -1;
@@ -655,14 +656,24 @@ void io::Parser::setNets(odb::dbBlock* block)
       odb::dbWireDecoder::OpCode pathId = decoder.next();
       while (pathId != odb::dbWireDecoder::END_DECODE) {
         // for each path start
-        layerName = "";
+        // when previous connection has a different direction of the current
+        // connection, use the last end point as the new begin point. it avoids
+        // missing segments between the connections with different directions.
+        if (orthogonal_conn) {
+          hasBeginPoint = true;
+          beginX = endX;
+          beginY = endY;
+        } else {
+          layerName = "";
+          hasBeginPoint = false;
+          beginX = -1;
+          beginY = -1;
+        }
         viaName = "";
         shape = "";
-        hasBeginPoint = false;
         hasEndPoint = false;
         beginInVia = false;
-        beginX = -1;
-        beginY = -1;
+        orthogonal_conn = false;
         beginExt = -1;
         endX = -1;
         endY = -1;
@@ -686,7 +697,6 @@ void io::Parser::setNets(odb::dbBlock* block)
                 logger_->error(DRT, 107, "Unsupported layer {}.", layerName);
               break;
             case odb::dbWireDecoder::POINT:
-
               if (!hasBeginPoint) {
                 decoder.getPoint(beginX, beginY);
                 hasBeginPoint = true;
@@ -743,9 +753,18 @@ void io::Parser::setNets(odb::dbBlock* block)
               break;
           }
           pathId = decoder.next();
+
+          if (pathId == odb::dbWireDecoder::POINT && hasEndPoint) {
+            frCoord x, y;
+            decoder.getPoint(x, y);
+            bool curr_conn_vertical = beginX == endX;
+            bool next_conn_vertical = endX == x;
+            orthogonal_conn = curr_conn_vertical != next_conn_vertical;
+          }
+
           if ((int) pathId <= 3 || pathId == odb::dbWireDecoder::TECH_VIA
               || pathId == odb::dbWireDecoder::VIA
-              || pathId == odb::dbWireDecoder::END_DECODE) {
+              || pathId == odb::dbWireDecoder::END_DECODE || orthogonal_conn) {
             if (hasEndPoint) {
               nextX = endX;
               nextY = endY;
@@ -753,6 +772,8 @@ void io::Parser::setNets(odb::dbBlock* block)
               nextX = beginX;
               nextY = beginY;
             }
+            prevLayer = decoder.getLayer();
+            layerName = prevLayer->getName();
             endpath = true;
           }
         } while (!endpath);
@@ -2070,6 +2091,11 @@ void io::Parser::addCutLayer(odb::dbTechLayer* layer)
     return;
   if (readLayerCnt_ == 0)
     addDefaultMasterSliceLayer();
+  auto* lowerlayer = layer->getLowerLayer();
+  if (lowerlayer != nullptr
+      && lowerlayer->getType() == odb::dbTechLayerType::CUT) {
+    return;
+  }
 
   unique_ptr<frLayer> uLayer = make_unique<frLayer>();
   auto tmpLayer = uLayer.get();
@@ -2632,14 +2658,16 @@ bool io::Parser::readGuide()
                        155,
                        "Guide in net {} uses layer {} ({})"
                        " that is outside the allowed routing range "
-                       "[{} ({}), ({})].",
+                       "[{} ({}), {} ({})] with via access on [{} ({})].",
                        net->getName(),
                        layer->getName(),
                        layerNum,
                        tech_->getLayer(BOTTOM_ROUTING_LAYER)->getName(),
                        BOTTOM_ROUTING_LAYER,
                        tech_->getLayer(TOP_ROUTING_LAYER)->getName(),
-                       TOP_ROUTING_LAYER);
+                       TOP_ROUTING_LAYER,
+                       tech_->getLayer(VIA_ACCESS_LAYERNUM)->getName(),
+                       VIA_ACCESS_LAYERNUM);
       }
 
       frRect rect;

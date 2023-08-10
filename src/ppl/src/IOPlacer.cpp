@@ -46,6 +46,7 @@
 #include "Slots.h"
 #include "odb/db.h"
 #include "ord/OpenRoad.hh"
+#include "ppl/AbstractIOPlacerRenderer.h"
 #include "utl/Logger.h"
 #include "utl/algorithms.h"
 
@@ -53,7 +54,7 @@ namespace ppl {
 
 using utl::PPL;
 
-IOPlacer::IOPlacer()
+IOPlacer::IOPlacer() : ioplacer_renderer_(nullptr)
 {
   netlist_ = std::make_unique<Netlist>();
   core_ = std::make_unique<Core>();
@@ -231,6 +232,7 @@ void IOPlacer::randomPlacement(std::vector<int> pin_indices,
                     "Adding to fallback mode.",
                     pin_indices.size());
       addGroupToFallback(pin_indices, false);
+      return;
     } else {
       logger_->error(
           PPL,
@@ -406,6 +408,16 @@ int IOPlacer::placeFallbackPins(bool random)
       int place_slot = getFirstSlotToPlaceGroup(
           first_slot, last_slot, group.first.size(), have_mirrored, io_pin);
 
+      if (place_slot == -1) {
+        logger_->error(
+            PPL,
+            109,
+            "Pin group of size {} does not fit any region in the die "
+            "boundaries. Not enough conmtiguous slots available. The first pin "
+            "of the group is {}.",
+            group.first.size(),
+            io_pin.getName());
+      }
       placeFallbackGroup(group, place_slot);
     }
   }
@@ -663,6 +675,11 @@ double IOPlacer::dbuToMicrons(int64_t dbu)
   return (double) dbu / (getBlock()->getDbUnitsPerMicron());
 }
 
+int IOPlacer::micronsToDbu(double microns)
+{
+  return (int64_t) (microns * getBlock()->getDbUnitsPerMicron());
+}
+
 void IOPlacer::findSlots(const std::set<int>& layers, Edge edge)
 {
   const int default_min_dist = 2;
@@ -696,6 +713,14 @@ void IOPlacer::findSlots(const std::set<int>& layers, Edge edge)
 
     min_dst_pins
         = (min_dst_pins == 0) ? default_min_dist * tech_min_dst : min_dst_pins;
+
+    if (offset == -1) {
+      offset = num_tracks_offset_ * tech_min_dst;
+      // limit default offset to 1um
+      if (offset > micronsToDbu(1.0)) {
+        offset = micronsToDbu(1.0);
+      }
+    }
 
     int init_tracks
         = vertical ? core_->getInitTracksX()[i] : core_->getInitTracksY()[i];
@@ -1212,7 +1237,7 @@ void IOPlacer::assignMirroredPin(IOPin& io_pin)
   mirrored_pin.assignToSection();
 }
 
-void IOPlacer::printConfig()
+void IOPlacer::printConfig(bool annealing)
 {
   logger_->info(PPL, 1, "Number of slots          {}", slots_.size());
   logger_->info(PPL, 2, "Number of I/O            {}", netlist_->numIOPins());
@@ -1220,9 +1245,11 @@ void IOPlacer::printConfig()
   logger_->info(
       PPL, 3, "Number of I/O w/sink     {}", netlist_io_pins_->numIOPins());
   logger_->info(PPL, 4, "Number of I/O w/o sink   {}", zero_sink_ios_.size());
-  logger_->info(PPL, 5, "Slots per section        {}", slots_per_section_);
-  logger_->info(
-      PPL, 6, "Slots increase factor    {:.1}", slots_increase_factor_);
+  if (!annealing) {
+    logger_->info(PPL, 5, "Slots per section        {}", slots_per_section_);
+    logger_->info(
+        PPL, 6, "Slots increase factor    {:.1}", slots_increase_factor_);
+  }
 }
 
 void IOPlacer::setupSections(int assigned_pins_count)
@@ -1918,6 +1945,37 @@ void IOPlacer::setAnnealingConfig(float temperature,
   alpha_ = alpha;
 }
 
+void IOPlacer::setRenderer(
+    std::unique_ptr<AbstractIOPlacerRenderer> ioplacer_renderer)
+{
+  ioplacer_renderer_ = std::move(ioplacer_renderer);
+}
+
+AbstractIOPlacerRenderer* IOPlacer::getRenderer()
+{
+  return ioplacer_renderer_.get();
+}
+
+void IOPlacer::setAnnealingDebugOn()
+{
+  annealing_debug_mode_ = true;
+}
+
+bool IOPlacer::isAnnealingDebugOn() const
+{
+  return annealing_debug_mode_;
+}
+
+void IOPlacer::setAnnealingDebugPaintInterval(const int iters_between_paintings)
+{
+  ioplacer_renderer_->setPaintingInterval(iters_between_paintings);
+}
+
+void IOPlacer::setAnnealingDebugNoPauseMode(const bool no_pause_mode)
+{
+  ioplacer_renderer_->setIsNoPauseMode(no_pause_mode);
+}
+
 void IOPlacer::runAnnealing(bool random)
 {
   initParms();
@@ -1933,6 +1991,13 @@ void IOPlacer::runAnnealing(bool random)
 
   ppl::SimulatedAnnealing annealing(
       netlist_io_pins_.get(), core_.get(), slots_, constraints_, logger_, db_);
+
+  if (isAnnealingDebugOn()) {
+    annealing.setDebugOn(std::move(ioplacer_renderer_));
+  }
+
+  printConfig(true);
+
   annealing.run(
       init_temperature_, max_iterations_, perturb_per_iter_, alpha_, random);
   annealing.getAssignment(assignment_);

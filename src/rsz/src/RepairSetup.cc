@@ -404,7 +404,10 @@ RepairSetup::repairSetup(PathRef &path,
       }
 
       // Debug code
-      // generatePairedBufferReport(drvr_path, drvr_index, &expanded);
+      if (generatePairedBufferReport(drvr_path, drvr_index, &expanded)) {
+        changed = true;
+        break;
+      }
 
       // Pin swapping 
       if (!skip_pin_swap) {
@@ -458,29 +461,73 @@ RepairSetup::repairSetup(PathRef &path,
   return changed;
 }
 
-LibertyCell *RepairSetup::bufferForInverter(LibertyCell *buffer) {
-
-    /*resizer_->findTargetCell(LibertyCell *cell,
-                          float load_cap,
-                          bool revisiting_inst)
-    */
-    float drive = resizer_->bufferDriveResistance(buffer);
-    for (auto cell: resizer_->inverter_cells_) {
-      if (resizer_->bufferDriveResistance(cell) < drive
-        // && meetsSizeCriteria(buffer, cell,true)
-        ) {
-        printf("X %s %s\n", buffer->name(), cell->name());
-        return cell;
-      }
+LibertyCell *RepairSetup::mapBuffToInv(LibertyCell *buffer)
+{
+  std::unordered_map<string, string> cell_map
+      = {{"BUFx2_ASAP7_75t_R", "INVx3_ASAP7_75t_R"},
+         {"BUFx3_ASAP7_75t_R", "INVx4_ASAP7_75t_R"},
+         {"BUFx4_ASAP7_75t_R", "INVx5_ASAP7_75t_R"},
+         {"BUFx4f_ASAP7_75t_R", "INVx5_ASAP7_75t_R"},
+         {"BUFx5_ASAP7_75t_R", "INVx6_ASAP7_75t_R"},
+         {"BUFx6f_ASAP7_75t_R", "INVx8_ASAP7_75t_R"},
+         /*
+         {"BUFx8_ASAP7_75t_R", "INVx8_ASAP7_75t_R"},
+         {"BUFx10_ASAP7_75t_R", "INVx11_ASAP7_75t_R"},
+         {"BUFx12_ASAP7_75t_R", "INVx13_ASAP7_75t_R"},
+         {"BUFx12f_ASAP7_75t_R", "INVx13_ASAP7_75t_R"}*/};
+  string inv_name = cell_map[buffer->name()];
+  for (auto cell: resizer_->inverter_cells_) {
+    if (cell->name() == inv_name) {
+      printf("Replacing %s with %s\n", buffer->name(), cell->name());
+      return cell;
     }
-    int count = resizer_->inverter_cells_.size();
-    auto cell = resizer_->inverter_cells_[count-1];
-    printf("Y %s %s\n", buffer->name(), cell->name());
-    return cell;
+  }
+  return nullptr;
+}
+LibertyCell *RepairSetup::bufferForInverter(const DcalcAnalysisPt *dcalc_ap,
+                                            LibertyCell *buffer, Pin *pin)
+{
+  // Completely dumb method
+  // return(mapBuffToInv(buffer));
+
+  //====================================================================
+  // New method
+/*
+  Instance *inst = network_->instance(pin);
+
+  if (!network_->isTopLevelPort(pin)) {
+    resizer_->ensureWireParasitic(pin);
+    // Includes net parasitic capacitance.
+    float load_cap
+        = graph_delay_calc_->loadCap(pin, dcalc_ap);
+    if (load_cap > 0.0) {
+      LibertyCell *cell = resizer_->inverter_lowest_drive_;
+      cell = resizer_->findTargetCell(cell, load_cap, false);
+      printf("22X %s %s\n", buffer->name(), cell->name());
+      return cell;
+    }
+  }
+  return nullptr;
+  */
+  //================================================
+  // OG method
+  float drive = resizer_->bufferDriveResistance(buffer);
+  for (auto cell: resizer_->inverter_cells_) {
+    if (resizer_->bufferDriveResistance(cell) < drive
+      // && meetsSizeCriteria(buffer, cell,true)
+      ) {
+      //printf("X %s %s\n", buffer->name(), cell->name());
+      return cell;
+    }
+  }
+  int count = resizer_->inverter_cells_.size();
+  auto cell = resizer_->inverter_cells_[count-1];
+  //printf("Y %s %s\n", buffer->name(), cell->name());
+  return cell;
 }
 
-bool RepairSetup::replaceBuffers(
-    vector<std::tuple<LibertyCell*, Instance*>>& buffer_chain)
+bool RepairSetup::replaceBuffers(const DcalcAnalysisPt *dcalc_ap,
+    vector<std::tuple<LibertyCell*, Pin*>>& buffer_chain)
 {
     int count = buffer_chain.size();
     int iter = 0;
@@ -488,24 +535,33 @@ bool RepairSetup::replaceBuffers(
 
     for (iter = 0; iter < count; ++iter) {
         if (iter + 1 < count) {
-          auto cell_inst_tuple0 = buffer_chain[iter];
-          auto cell_inst_tuple1 = buffer_chain[iter + 1];
-          LibertyCell *new_cell0, *lib_cell0 = std::get<0>(cell_inst_tuple0);
-          Instance* inst0 = std::get<1>(cell_inst_tuple0);
-          LibertyCell *new_cell1, *lib_cell1 = std::get<0>(cell_inst_tuple1);
-          Instance* inst1 = std::get<1>(cell_inst_tuple1);
+          auto cell_pin_tuple0 = buffer_chain[iter];
+          auto cell_pin_tuple1 = buffer_chain[iter + 1];
+          LibertyCell *new_cell0, *lib_cell0 = std::get<0>(cell_pin_tuple0);
+          Pin* pin0 = std::get<1>(cell_pin_tuple0);
+          Instance* inst0 = network_->instance(pin0);
+          LibertyCell *new_cell1, *lib_cell1 = std::get<0>(cell_pin_tuple1);
+          Pin* pin1 = std::get<1>(cell_pin_tuple1);
+          Instance* inst1 = network_->instance(pin1);
           if (!resizer_->dontTouch(inst0) && !resizer_->dontTouch(inst1)) {
             // Get the cell
-            new_cell0 = bufferForInverter(lib_cell0);
-            new_cell1 = bufferForInverter(lib_cell1);
-            resizer_->replaceCell(inst0, new_cell0, true);
-            resizer_->replaceCell(inst1, new_cell1, true);
+            new_cell0 = bufferForInverter(dcalc_ap, lib_cell0, pin0);
+            new_cell1 = bufferForInverter(dcalc_ap, lib_cell1, pin1);
+            if (new_cell0 == nullptr || new_cell1 == nullptr) {
+              continue;
+            }
+            // XXXXXXXXXXXXXXXXXXXXX
+            // We need to worry about inserted_buffers_
+            // if we swapped a cell here then we need to swap it back before
+            // we go have fun with inserted_buffers_ list.
+            // simplest solution is to have a list of newly inserted inverters
+            // in pairs and the buffer cells that were used before.
+            // the undo must happen in pairs
+            printf("Actually doing the swap %s %s \n", network_->name(inst0), network_->name(inst1));
+            resizer_->swapInstance(inst0, new_cell0, false);
+            resizer_->swapInstance(inst1, new_cell1, false);
             fflush(stdout);
             swap_made = true;
-          }
-          else {
-            printf("AAAA: Don't touch triggered\n");
-            fflush(stdout);
           }
         }
         iter += 2;
@@ -528,13 +584,14 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
 
     PathRef *path;
     Pin *pin;
-    Instance *drvr;
+    Instance *drvr, *last_drvr = nullptr;
     LibertyPort *in = nullptr;
     LibertyPort *out = nullptr;
     LibertyCell *cell = nullptr;
     bool have_buffer = false;
-    vector<vector<std::tuple<LibertyCell *, Instance *>>> buffer_chains;
-    vector<std::tuple<LibertyCell *, Instance *>> buffer_chain;
+    const DcalcAnalysisPt *dcalc_ap = drvr_path->dcalcAnalysisPt(sta_);
+    vector<vector<std::tuple<LibertyCell *, Pin *>>> buffer_chains;
+    vector<std::tuple<LibertyCell *, Pin *>> buffer_chain;
 
     for (int i= drvr_index; i > 0; --i) {
         path = expanded->path(i);
@@ -552,15 +609,18 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
         if (cell == nullptr && out != nullptr) {
             cell = out->libertyCell();
         }
-        if (cell != nullptr) {
+        if (cell != nullptr && last_drvr != drvr) {
             if (cell->isBuffer()) {
                 if (!have_buffer) {
-                  buffer_chain.push_back(std::make_tuple(cell, drvr)); // pin ??
+                  buffer_chain.push_back(std::make_tuple(cell, pin));
+                  last_drvr = drvr;
                   have_buffer = true;
                 }
                 else {
-                  buffer_chain.push_back(std::make_tuple(cell, drvr)); // pin?
+                  buffer_chain.push_back(std::make_tuple(cell, pin));
+                  last_drvr = drvr;
                 }
+                //printf("Found a buffer %s\n", network_->name(network_->instance(pin)));
             }
             else {
                 // This is where we were done with the chain part.
@@ -579,7 +639,7 @@ bool RepairSetup::generatePairedBufferReport(PathRef *drvr_path,
         //printf("Found %lu chains\n", buffer_chains.size());
         for (auto chain : buffer_chains) {
           if (chain.size() >= 2) {
-                replaceBuffers(chain);
+                return replaceBuffers(dcalc_ap, chain);
           }
         }
     }

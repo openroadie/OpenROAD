@@ -102,8 +102,10 @@ private:
                    bool skip_gate_cloning);
   //============================================================================
   // All the experimental code not ready for production
-  LibertyCell *bufferForInverter(LibertyCell *buffer);
-  bool replaceBuffers(vector<std::tuple<LibertyCell *, sta::Instance *>> &buffer_chain);
+  LibertyCell *mapBuffToInv(LibertyCell *buffer);
+  LibertyCell *bufferForInverter(const DcalcAnalysisPt *dcalc_ap, LibertyCell *buffer, Pin *pin);
+  void swapBufferCell(sta::Instance *inst, LibertyCell *cell);
+  bool replaceBuffers(const DcalcAnalysisPt *dcalc_ap, vector<std::tuple<LibertyCell *, Pin *>> &buffer_chain);
 
   bool generatePairedBufferReport(PathRef *drvr_path, int drvr_index,
                                   PathExpanded *expanded);

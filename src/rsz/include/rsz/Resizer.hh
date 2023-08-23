@@ -120,6 +120,7 @@ using sta::Slack;
 
 typedef std::tuple<LibertyPort *, LibertyPort *> LibertyPortTuple;
 typedef std::tuple<Instance *, Instance *>  InstanceTuple;
+typedef std::tuple<Instance *, LibertyCell *>  InstanceCellTuple;
 
 class AbstractSteinerRenderer;
 class SteinerTree;
@@ -550,6 +551,7 @@ protected:
   void warnBufferMovedIntoCore();
   bool isLogicStdCell(const Instance *inst);
   void invalidateParasitics(const Pin *pin, const Net *net);
+  void swapInstance(Instance *inst, LibertyCell *cell, bool isUndo);
   ////////////////////////////////////////////////////////////////
   // Jounalling support for checkpointing and backing out changes
   // during repair timing.
@@ -559,6 +561,7 @@ protected:
                       int &inserted_buffer_count,
                       int &cloned_gate_count);
   void journalUndoGateCloning(int &cloned_gate_count);
+  void journalUndoBufferToInverterSwaps();
   void journalSwapPins(Instance *inst, LibertyPort *port1, LibertyPort *port2);
   void journalInstReplaceCellBefore(Instance *inst);
   void journalMakeBuffer(Instance *buffer);
@@ -646,12 +649,22 @@ protected:
   NetSeq worst_slack_nets_;
 
   // Journal to roll back changes (OpenDB not up to the task).
+  // add comments for all these variables
   Map<Instance*, LibertyCell*> resized_inst_map_;
-  InstanceSeq inserted_buffers_;
+  // inserted buffer set is used to unresize the buffers that may have been
+  // inserted and now need to be removed.
   InstanceSet inserted_buffer_set_;
+  // inserted buffers is a list of buffers that have been inserted. This is
+  // used to uninsert the buffers if timing optimization goals are not met.
+  InstanceSeq inserted_buffers_;
+  // Instances and pins on the instances that were swapped.
   Map<Instance *, LibertyPortTuple> swapped_pins_;
+  // List of gates that have been cloned along with their original instance
   std::stack<InstanceTuple> cloned_gates_;
+  // List of instances that have been cloned
   std::unordered_set<Instance *> cloned_inst_set_;
+  // List of inverter pairs that were created by replacing buffers
+  std::vector<InstanceCellTuple> inverter_pairs_;
 
   dpl::Opendp* opendp_;
 

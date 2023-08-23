@@ -590,7 +590,7 @@ void TechChar::initCharacterization()
       libertyCell->bufferPorts(input, output);
       sta::LibertyLibrary* lib = libertyCell->libertyLibrary();
 
-      input->slewLimit(sta::MinMax::max(), maxSlew, maxSlewExist);
+      output->slewLimit(sta::MinMax::max(), maxSlew, maxSlewExist);
       if (!maxSlewExist)
         lib->defaultMaxSlew(maxSlew, maxSlewExist);
       if (!maxSlewExist)
@@ -1185,11 +1185,7 @@ void TechChar::create()
     printCharacterization();
     printSolution();
   }
-  // super confused -cherry
-  if (openStaChar_ != nullptr) {
-    openStaChar_->clear();
-    openStaChar_.reset(nullptr);
-  }
+  odb::dbBlock::destroy(charBlock_);
 }
 
 }  // namespace cts

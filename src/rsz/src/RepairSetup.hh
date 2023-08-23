@@ -87,7 +87,7 @@ public:
                    int max_passes,
                    bool verbose,
                    bool skip_pin_swap,
-                   bool enable_gate_cloning);
+                   bool skip_gate_cloning);
   // For testing.
   void repairSetup(const Pin *end_pin);
   // Rebuffer one net (for testing).
@@ -109,6 +109,8 @@ private:
 
   bool generatePairedBufferReport(PathRef *drvr_path, int drvr_index,
                                   PathExpanded *expanded);
+  void debugCheckMultipleBuffers(PathRef &path,
+                                 PathExpanded *expanded);
   //============================================================================
   void getEquivPortList2(sta::FuncExpr *expr, sta::LibertyPortSet &ports,
                          sta::FuncExpr::Operator &status);

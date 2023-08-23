@@ -2661,6 +2661,47 @@ Resizer::recoverPower()
   }
   recover_power_->recoverPower();
 }
+
+//=============================================================================
+// Specialized function to swap a buffer for an inverter or the other
+// way around.
+void Resizer::swapInstance(Instance* inst, LibertyCell* cell, bool isUndo)
+{
+  Instance* parent = db_network_->topInstance();
+  LibertyPort *input_1, *output_1;
+  LibertyPort *input_2, *output_2;
+  LibertyCell* current_cell = network_->libertyCell(inst);
+  current_cell->bufferPorts(input_1, output_1);
+  // Now we have the ports for the original buffer
+  cell->bufferPorts(input_2, output_2);
+  // Todo: Use the earlier name for undo information.
+  string inst_name = makeUniqueInstName("buf_to_inv");
+  Instance* clone_inst = nullptr;
+  Net *input, *output;
+
+  printf("Swapping %s(%s) with %s\n", network_->name(inst),
+         current_cell->name(), cell->name());
+  std::unique_ptr<InstancePinIterator> inst_pin_iter{
+      network_->pinIterator(inst)};
+  while (inst_pin_iter->hasNext()) {
+    Pin* pin = inst_pin_iter->next();
+    auto net = network_->net(pin);
+    if (clone_inst == nullptr) {
+      clone_inst = makeInstance(cell, inst_name.c_str(), parent,
+                                db_network_->location(pin));
+    }
+    if (network_->direction(pin)->isInput()) {
+      // Connect to all the inputs of the original cell.
+      sta_->connectPin(clone_inst, input_2, net);
+    } else {
+      sta_->connectPin(clone_inst, output_2, net);
+    }
+    parasiticsInvalid(net);
+  }
+  removeBuffer(const_cast<Instance*>(inst));
+  // TODO - remove the buffer from the undo structure
+  // TODO - add the inverter to the undo structure
+}
 ////////////////////////////////////////////////////////////////
 // Journal to roll back changes (OpenDB not up to the task).
 void

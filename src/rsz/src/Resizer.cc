@@ -2722,13 +2722,16 @@ Resizer::journalSwapPins(Instance *inst, LibertyPort *port1,
 void
 Resizer::journalInstReplaceCellBefore(Instance *inst)
 {
-  LibertyCell *lib_cell = network_->libertyCell(inst);
-  debugPrint(logger_, RSZ, "journal", 1, "journal replace {} ({})",
-             network_->pathName(inst),
-             lib_cell->name());
-  // Do not clobber an existing checkpoint cell.
-  if (!resized_inst_map_.hasKey(inst)) {
-    resized_inst_map_[inst] = lib_cell;
+  if (new_journal_) {
+    journal_->instReplaceCellBefore(inst);
+  }
+  else {
+    // Do not clobber an existing checkpoint cell.
+    LibertyCell* lib_cell = network_->libertyCell(inst);
+    debugPrint(logger_, RSZ, "journal", 1, "journal replace {} ({})", network_->pathName(inst), lib_cell->name());
+    if (!resized_inst_map_.hasKey(inst)) {
+      resized_inst_map_[inst] = lib_cell;
+    }
   }
 }
 

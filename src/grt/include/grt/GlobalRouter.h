@@ -45,6 +45,7 @@
 
 #include "GRoute.h"
 #include "RoutePt.h"
+#include "ant/AntennaChecker.hh"
 #include "odb/db.h"
 #include "odb/dbBlockCallBackObj.h"
 #include "sta/Liberty.hh"
@@ -135,7 +136,7 @@ struct PinGridLocation
 
 typedef std::vector<std::pair<int, odb::Rect>> Guides;
 
-class GlobalRouter
+class GlobalRouter : public ant::GlobalRouteSource
 {
  public:
   GlobalRouter();
@@ -195,9 +196,9 @@ class GlobalRouter
                    bool end_incremental = false);
   void saveCongestion();
   NetRouteMap& getRoutes() { return routes_; }
-  bool haveRoutes();
   Net* getNet(odb::dbNet* db_net);
   int getTileSize() const;
+  bool isNonLeafClock(odb::dbNet* db_net);
 
   // repair antenna public functions
   void repairAntennas(odb::dbMTerm* diode_mterm,
@@ -209,10 +210,14 @@ class GlobalRouter
   void addDirtyNet(odb::dbNet* net);
   std::set<odb::dbNet*> getDirtyNets() { return dirty_nets_; }
   // check_antennas
-  void makeNetWires();
-  void destroyNetWires();
+  bool haveRoutes() override;
+  void makeNetWires() override;
+  void destroyNetWires() override;
 
   double dbuToMicrons(int64_t dbu);
+
+  void addNetToRoute(odb::dbNet* db_net);
+  std::vector<odb::dbNet*> getNetsToRoute();
 
   // functions for random grt
   void setSeed(int seed) { seed_ = seed; }
@@ -253,6 +258,7 @@ class GlobalRouter
       const Pin& pin,
       std::vector<std::pair<odb::Point, odb::Point>>& ap_positions);
   odb::Point findFakePinPosition(Pin& pin, odb::dbNet* db_net);
+  void getNetLayerRange(odb::dbNet* db_net, int& min_layer, int& max_layer);
 
   void setRenderer(std::unique_ptr<AbstractGrouteRenderer> groute_renderer);
   AbstractGrouteRenderer* getRenderer();
@@ -269,6 +275,8 @@ class GlobalRouter
   // main functions
   void initCoreGrid(int max_routing_layer);
   void initRoutingLayers();
+  void checkAdjacentLayersDirection(int min_routing_layer,
+                                    int max_routing_layer);
   std::vector<std::pair<int, int>> calcLayerPitches(int max_layer);
   void initRoutingTracks(int max_routing_layer);
   void averageTrackPattern(odb::dbTrackGrid* grid,
@@ -280,7 +288,6 @@ class GlobalRouter
   void initNets(std::vector<Net*>& nets);
   bool makeFastrouteNet(Net* net);
   bool checkPinPositions(Net* net, std::vector<odb::Point>& last_pos);
-  void getNetLayerRange(Net* net, int& min_layer, int& max_layer);
   void computeGridAdjustments(int min_routing_layer, int max_routing_layer);
   void computeTrackAdjustments(int min_routing_layer, int max_routing_layer);
   void computeUserGlobalAdjustments(int min_routing_layer,
@@ -307,14 +314,13 @@ class GlobalRouter
   void findPins(Net* net);
   void findPins(Net* net, std::vector<RoutePt>& pins_on_grid, int& root_idx);
   float getNetSlack(Net* net);
-  void computeNetSlacks();
   odb::dbTechLayer* getRoutingLayerByIndex(int index);
   RoutingTracks getRoutingTracksByIndex(int layer);
   void addGuidesForLocalNets(odb::dbNet* db_net,
                              GRoute& route,
                              int min_routing_layer,
                              int max_routing_layer);
-  void addGuidesForPinAccess(odb::dbNet* db_net, GRoute& route);
+  void connectTopLevelPins(odb::dbNet* db_net, GRoute& route);
   void addRemainingGuides(NetRouteMap& routes,
                           std::vector<Net*>& nets,
                           int min_routing_layer,
@@ -343,12 +349,23 @@ class GlobalRouter
   void reportCongestion();
   void updateEdgesUsage();
   void updateDbCongestionFromGuides();
+  void computeGCellGridPatternFromGuides(
+      std::unordered_map<odb::dbNet*, Guides>& guides);
+  void fillTileSizeMaps(std::unordered_map<odb::dbNet*, Guides>& net_guides,
+                        std::map<int, int>& tile_size_x_map,
+                        std::map<int, int>& tile_size_y_map,
+                        int& min_loc_x,
+                        int& min_loc_y);
+  void findTileSize(const std::map<int, int>& tile_size_x_map,
+                    const std::map<int, int>& tile_size_y_map,
+                    int& tile_size_x,
+                    int& tile_size_y);
 
   // check functions
   void checkPinPlacement();
 
   // incremental funcions
-  void updateDirtyRoutes();
+  void updateDirtyRoutes(bool save_guides = false);
   void mergeResults(NetRouteMap& routes);
   void updateDirtyNets(std::vector<Net*>& dirty_nets);
   void updateDbCongestion();
@@ -361,13 +378,12 @@ class GlobalRouter
   void computeObstructionsAdjustments();
   void findLayerExtensions(std::vector<int>& layer_extensions);
   int findObstructions(odb::Rect& die_area);
-  bool layerIsBlocked(
-      int layer,
-      odb::dbTechLayerDir& direction,
-      const std::unordered_map<int, odb::Rect>& macro_obs_per_layer,
-      odb::Rect& extended_obs);
+  bool layerIsBlocked(int layer,
+                      const std::unordered_map<int, std::vector<odb::Rect>>&
+                          macro_obs_per_layer,
+                      std::vector<odb::Rect>& extended_obs);
   void extendObstructions(
-      std::unordered_map<int, odb::Rect>& macro_obs_per_layer,
+      std::unordered_map<int, std::vector<odb::Rect>>& macro_obs_per_layer,
       int bottom_layer,
       int top_layer);
   int findInstancesObstructions(odb::Rect& die_area,
@@ -379,7 +395,6 @@ class GlobalRouter
   void makeBtermPins(Net* net, odb::dbNet* db_net, const odb::Rect& die_area);
   void initClockNets();
   bool isClkTerm(odb::dbITerm* iterm, sta::dbNetwork* network);
-  bool isNonLeafClock(odb::dbNet* db_net);
   int trackSpacing();
   void initGridAndNets();
 
@@ -421,7 +436,6 @@ class GlobalRouter
   bool verbose_;
   int min_layer_for_clock_;
   int max_layer_for_clock_;
-  float critical_nets_percentage_;
 
   // variables for random grt
   int seed_;
@@ -437,6 +451,7 @@ class GlobalRouter
   odb::dbBlock* block_;
 
   std::set<odb::dbNet*> dirty_nets_;
+  std::vector<odb::dbNet*> nets_to_route_;
 
   RepairAntennas* repair_antennas_;
   std::unique_ptr<AbstractRoutingCongestionDataSource> heatmap_;
@@ -485,7 +500,7 @@ class IncrementalGRoute
   // Saves global router state and enables db callbacks.
   IncrementalGRoute(GlobalRouter* groute, odb::dbBlock* block);
   // Update global routes for dirty nets.
-  void updateRoutes();
+  void updateRoutes(bool save_guides = false);
   // Disables db callbacks.
   ~IncrementalGRoute();
 

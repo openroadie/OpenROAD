@@ -1080,6 +1080,21 @@ void Grid::removeStrap(Straps* strap)
                              }));
 }
 
+bool Grid::hasShapes() const
+{
+  for (const auto& [layer, shapes] : getShapes()) {
+    if (!shapes.empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Grid::hasVias() const
+{
+  return !vias_.empty();
+}
+
 ///////////////
 
 CoreGrid::CoreGrid(VoltageDomain* domain,
@@ -1332,10 +1347,12 @@ ShapeTreeMap InstanceGrid::getInstanceObstructions(
   for (auto* ob : master->getObstructions()) {
     odb::Rect obs_rect = ob->getBox();
 
-    // add min spacing
+    // add max of min spacing and the halo
     auto* layer = ob->getTechLayer();
-    obs_rect.bloat(layer->getSpacing(), obs_rect);
+    odb::Rect spacing_rect;
+    obs_rect.bloat(layer->getSpacing(), spacing_rect);
     obs_rect = applyHalo(obs_rect, halo, true, true, true);
+    obs_rect.merge(spacing_rect);
 
     transform.apply(obs_rect);
     auto shape = std::make_shared<Shape>(layer, obs_rect, Shape::BLOCK_OBS);

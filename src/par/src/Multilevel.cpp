@@ -309,7 +309,7 @@ void MultilevelPartitioner::InitialPartition(
     // call FM refiner to improve the solution
     k_way_fm_refiner_->Refine(
         hgraph, upper_block_balance, lower_block_balance, solution);
-    const auto token = evaluator_->CutEvaluator(hgraph, solution, true);
+    const auto token = evaluator_->CutEvaluator(hgraph, solution, false);
     initial_solutions_cost.push_back(token.cost);
     // Here we only check the upper bound to make sure more possible solutions
     initial_solutions_flag.push_back(token.block_balance
@@ -318,7 +318,7 @@ void MultilevelPartitioner::InitialPartition(
         "[INIT-PART] {} :: Random part cutcost = {}, balance_flag = {}",
         i,
         initial_solutions_cost.back(),
-        initial_solutions_flag.back());
+        (bool) initial_solutions_flag.back());
   }
   // generate random vile solution
   for (int i = 0; i < num_initial_random_solutions_; ++i) {
@@ -334,7 +334,7 @@ void MultilevelPartitioner::InitialPartition(
     // call FM refiner to improve the solution
     k_way_fm_refiner_->Refine(
         hgraph, upper_block_balance, lower_block_balance, solution);
-    const auto token = evaluator_->CutEvaluator(hgraph, solution, true);
+    const auto token = evaluator_->CutEvaluator(hgraph, solution, false);
     initial_solutions_cost.push_back(token.cost);
     // Here we only check the upper bound to make sure more possible solutions
     initial_solutions_flag.push_back(token.block_balance
@@ -343,7 +343,7 @@ void MultilevelPartitioner::InitialPartition(
         "[INIT-PART] {} :: Random VILE part cutcost = {}, balance_flag = {}",
         i,
         initial_solutions_cost.back(),
-        initial_solutions_flag.back());
+        (bool) initial_solutions_flag.back());
   }
 
   // Vile partitioning. Vile partitioning needs refiner to generated a balanced
@@ -358,13 +358,14 @@ void MultilevelPartitioner::InitialPartition(
   k_way_fm_refiner_->Refine(
       hgraph, upper_block_balance, lower_block_balance, vile_solution);
   k_way_fm_refiner_->RestoreDefaultParameters();
-  const auto vile_token = evaluator_->CutEvaluator(hgraph, vile_solution, true);
+  const auto vile_token
+      = evaluator_->CutEvaluator(hgraph, vile_solution, false);
   initial_solutions_cost.push_back(vile_token.cost);
   initial_solutions_flag.push_back(vile_token.block_balance
                                    <= upper_block_balance);
   logger_->report("[INIT-PART] :: VILE part cutcost = {}, balance_flag = {}",
                   initial_solutions_cost.back(),
-                  initial_solutions_flag.back());
+                  (bool) initial_solutions_flag.back());
   // ILP partitioning
   if (hgraph->GetNumVertices() <= num_vertices_threshold_ilp_) {
     auto& ilp_solution = initial_solutions.back();
@@ -384,13 +385,14 @@ void MultilevelPartitioner::InitialPartition(
                             lower_block_balance,
                             ilp_solution,
                             PartitionType::INIT_DIRECT_ILP);
-    const auto ilp_token = evaluator_->CutEvaluator(hgraph, ilp_solution, true);
+    const auto ilp_token
+        = evaluator_->CutEvaluator(hgraph, ilp_solution, false);
     initial_solutions_cost.push_back(ilp_token.cost);
     initial_solutions_flag.push_back(ilp_token.block_balance
                                      <= upper_block_balance);
     logger_->report("[INIT-PART] :: ILP part cutcost = {}, balance_flag = {}",
                     initial_solutions_cost.back(),
-                    initial_solutions_flag.back());
+                    (bool) initial_solutions_flag.back());
   }
   // sort the solutions based on cost
   std::vector<int> solution_ids(initial_solutions_cost.size(), 0);
@@ -505,7 +507,7 @@ void MultilevelPartitioner::RefinePartition(
     float best_cost = std::numeric_limits<float>::max();
     for (auto i = 0; i < top_solutions.size(); i++) {
       const float cost
-          = evaluator_->CutEvaluator(hgraph, top_solutions[i], true).cost;
+          = evaluator_->CutEvaluator(hgraph, top_solutions[i], false).cost;
       if (best_cost > cost) {
         best_cost = cost;
         best_solution_id = i;
@@ -648,7 +650,7 @@ std::vector<int> MultilevelPartitioner::CutOverlayILPPart(
   }
 
   logger_->info(PAR, 158, "Statistics of cut-overlay solution:");
-  evaluator_->CutEvaluator(hgraph, optimal_solution, true);
+  evaluator_->CutEvaluator(hgraph, optimal_solution, false);
   return optimal_solution;
 }
 

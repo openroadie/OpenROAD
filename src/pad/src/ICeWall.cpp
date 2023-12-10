@@ -495,6 +495,15 @@ void ICeWall::placePad(odb::dbMaster* master,
     inst = odb::dbInst::create(block, master, name.c_str());
   }
 
+  if (master != nullptr && inst->getMaster() != master) {
+    logger_->error(utl::PAD,
+                   118,
+                   "Master cell mismatch for {} ({}) is not {}",
+                   inst->getName(),
+                   inst->getMaster()->getName(),
+                   master->getName());
+  }
+
   if (row == nullptr) {
     logger_->error(utl::PAD, 19, "Row must be specified to place a pad");
   }
@@ -594,10 +603,53 @@ void ICeWall::placeInstance(odb::dbRow* row,
   }
 
   inst->setLocation(index_pt.x(), index_pt.y());
-
-  // check for overlaps
   const odb::Rect inst_rect = inst->getBBox()->getBox();
   auto* block = getBlock();
+  const double dbus = block->getDbUnitsPerMicron();
+
+  // Check if its in the row
+  bool outofrow = false;
+  switch (getRowEdge(row)) {
+    case odb::Direction2D::North:
+    case odb::Direction2D::South:
+      if (row_bbox.xMin() > inst_rect.xMin()
+          || row_bbox.xMax() < inst_rect.xMax()) {
+        if (!allow_overlap) {
+          outofrow = true;
+        }
+      }
+      break;
+    case odb::Direction2D::West:
+    case odb::Direction2D::East:
+      if (row_bbox.yMin() > inst_rect.yMin()
+          || row_bbox.yMax() < inst_rect.yMax()) {
+        if (!allow_overlap) {
+          outofrow = true;
+        }
+      }
+      break;
+  }
+  if (outofrow) {
+    logger_->error(utl::PAD,
+                   119,
+                   "Unable to place {} ({}) at ({:.3f}um, {:.3f}um) - "
+                   "({:.3f}um, {:.3f}um) as it is not inside the row {} "
+                   "({:.3f}um, {:.3f}um) - "
+                   "({:.3f}um, {:.3f}um)",
+                   inst->getName(),
+                   inst->getMaster()->getName(),
+                   inst_rect.xMin() / dbus,
+                   inst_rect.yMin() / dbus,
+                   inst_rect.xMax() / dbus,
+                   inst_rect.yMax() / dbus,
+                   row->getName(),
+                   row_bbox.xMin() / dbus,
+                   row_bbox.yMin() / dbus,
+                   row_bbox.xMax() / dbus,
+                   row_bbox.yMax() / dbus);
+  }
+
+  // check for overlaps with other instances
   for (auto* check_inst : block->getInsts()) {
     if (check_inst == inst) {
       continue;
@@ -607,12 +659,12 @@ void ICeWall::placeInstance(odb::dbRow* row,
     }
     const odb::Rect check_rect = check_inst->getBBox()->getBox();
     if (!allow_overlap && inst_rect.overlaps(check_rect)) {
-      const double dbus = block->getDbUnitsPerMicron();
       logger_->error(utl::PAD,
                      1,
                      "Unable to place {} ({}) at ({:.3f}um, {:.3f}um) - "
                      "({:.3f}um, {:.3f}um) as it "
-                     "overlaps with {} ({})",
+                     "overlaps with {} ({}) at ({:.3f}um, {:.3f}um) - "
+                     "({:.3f}um, {:.3f}um)",
                      inst->getName(),
                      inst->getMaster()->getName(),
                      inst_rect.xMin() / dbus,
@@ -620,7 +672,11 @@ void ICeWall::placeInstance(odb::dbRow* row,
                      inst_rect.xMax() / dbus,
                      inst_rect.yMax() / dbus,
                      check_inst->getName(),
-                     check_inst->getMaster()->getName());
+                     check_inst->getMaster()->getName(),
+                     check_rect.xMin() / dbus,
+                     check_rect.yMin() / dbus,
+                     check_rect.xMax() / dbus,
+                     check_rect.yMax() / dbus);
     }
   }
   inst->setPlacementStatus(odb::dbPlacementStatus::FIRM);
@@ -1123,7 +1179,7 @@ std::set<odb::dbNet*> ICeWall::connectByAbutment(
 
 std::vector<std::pair<odb::dbITerm*, odb::dbITerm*>> ICeWall::getTouchingIterms(
     odb::dbInst* inst0,
-    odb::dbInst* inst1) const
+    odb::dbInst* inst1)
 {
   if (!inst0->getBBox()->getBox().intersects(inst1->getBBox()->getBox())) {
     return {};
@@ -1230,7 +1286,7 @@ std::vector<odb::dbInst*> ICeWall::getPadInstsInRow(odb::dbRow* row) const
 
     const odb::Rect instbbox = inst->getBBox()->getBox();
 
-    if (row_bbox.intersects(instbbox)) {
+    if (row_bbox.overlaps(instbbox)) {
       insts.push_back(inst);
     }
   }

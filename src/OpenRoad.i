@@ -354,6 +354,15 @@ write_lef_cmd(const char *filename)
   ord->writeLef(filename);
 }
 
+void
+write_abstract_lef_cmd(const char *filename,
+                       int bloat_factor,
+                       bool bloat_occupied_layers)
+{
+  OpenRoad *ord = getOpenRoad();
+  ord->writeAbstractLef(filename, bloat_factor, bloat_occupied_layers);
+}
+
 
 void 
 write_cdl_cmd(const char *outFilename,
@@ -437,7 +446,7 @@ get_db_tech()
 bool
 db_has_tech()
 {
-  return getDb()->getTech() != nullptr;
+  return !getDb()->getTechs().empty();
 }
 
 odb::dbBlock *
@@ -467,7 +476,7 @@ dbu_to_microns(int dbu)
     auto logger = getLogger();
     logger->error(utl::ORD, 49, "No tech is loaded");
   }
-  return static_cast<double>(dbu) / tech->getLefUnits();
+  return static_cast<double>(dbu) / tech->getDbUnitsPerMicron();
 }
 
 int
@@ -478,7 +487,7 @@ microns_to_dbu(double microns)
     auto logger = getLogger();
     logger->error(utl::ORD, 50, "No tech is loaded");
   }
-  return std::round(microns * tech->getLefUnits());
+  return std::round(microns * tech->getDbUnitsPerMicron());
 }
 
 // Common check for placement tools.

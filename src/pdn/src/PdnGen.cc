@@ -47,6 +47,7 @@
 #include "power_cells.h"
 #include "renderer.h"
 #include "rings.h"
+#include "sroute.h"
 #include "straps.h"
 #include "techlayer.h"
 #include "utl/Logger.h"
@@ -74,6 +75,7 @@ void PdnGen::init(dbDatabase* db, Logger* logger)
 {
   db_ = db;
   logger_ = logger;
+  sroute_ = std::make_unique<SRoute>(this, db, logger_);
 }
 
 void PdnGen::reset()
@@ -112,7 +114,6 @@ void PdnGen::buildGrids(bool trim)
   for (auto* grid : grids) {
     grid->getGridLevelObstructions(block_obs);
   }
-
   ShapeTreeMap all_shapes;
 
   // get special shapes
@@ -143,6 +144,21 @@ void PdnGen::buildGrids(bool trim)
     trimShapes();
 
     cleanupVias();
+  }
+
+  bool failed = false;
+  for (auto* grid : grids) {
+    if (grid->hasShapes() || grid->hasVias()) {
+      continue;
+    }
+    logger_->warn(utl::PDN,
+                  232,
+                  "{} does not contain any shapes or vias.",
+                  grid->getLongName());
+    failed = true;
+  }
+  if (failed) {
+    logger_->error(utl::PDN, 233, "Failed to generate full power grid.");
   }
 
   updateRenderer();
@@ -632,6 +648,38 @@ void PdnGen::updateRenderer() const
   }
 }
 
+void PdnGen::createSrouteWires(
+    const char* net,
+    const char* outerNet,
+    odb::dbTechLayer* layer0,
+    odb::dbTechLayer* layer1,
+    int cut_pitch_x,
+    int cut_pitch_y,
+    const std::vector<odb::dbTechViaGenerateRule*>& vias,
+    const std::vector<odb::dbTechVia*>& techvias,
+    int max_rows,
+    int max_columns,
+    const std::vector<odb::dbTechLayer*>& ongrid,
+    std::vector<int> metalwidths,
+    std::vector<int> metalspaces,
+    const std::vector<odb::dbInst*>& insts)
+{
+  sroute_->createSrouteWires(net,
+                             outerNet,
+                             layer0,
+                             layer1,
+                             cut_pitch_x,
+                             cut_pitch_y,
+                             vias,
+                             techvias,
+                             max_rows,
+                             max_columns,
+                             ongrid,
+                             metalwidths,
+                             metalspaces,
+                             insts);
+}
+
 void PdnGen::writeToDb(bool add_pins, const std::string& report_file) const
 {
   std::map<odb::dbNet*, odb::dbSWire*> net_map;
@@ -814,6 +862,21 @@ void PdnGen::checkDesign(odb::dbBlock* block) const
             inst->getName());
       }
     }
+  }
+
+  bool unplaced_macros = false;
+  for (auto* inst : block->getInsts()) {
+    if (!inst->isBlock()) {
+      continue;
+    }
+    if (!inst->getPlacementStatus().isFixed()) {
+      unplaced_macros = true;
+      logger_->warn(
+          utl::PDN, 234, "{} has not been placed and fixed.", inst->getName());
+    }
+  }
+  if (unplaced_macros) {
+    logger_->error(utl::PDN, 235, "Design has unplaced macros.");
   }
 }
 

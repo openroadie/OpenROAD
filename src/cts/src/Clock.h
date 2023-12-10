@@ -36,6 +36,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <unordered_map>
@@ -65,13 +66,19 @@ class ClockInst
             int x,
             int y,
             odb::dbITerm* pinObj = nullptr,
-            float inputCap = 0.0)
+            float inputCap = 0.0,
+            float insertionDelay = 0.0,
+            float outputCap = 0.0,
+            float idealOutputCap = 0.0)
       : name_(name),
         master_(master),
         type_(type),
         location_(x, y),
         inputPinObj_(pinObj),
-        inputCap_(inputCap)
+        inputCap_(inputCap),
+        insertionDelay_(insertionDelay),
+        outputCap_(outputCap),
+        idealOutputCap_(idealOutputCap)
   {
   }
 
@@ -87,8 +94,12 @@ class ClockInst
   odb::dbITerm* getDbInputPin() const { return inputPinObj_; }
   void setInputCap(float cap) { inputCap_ = cap; }
   float getInputCap() const { return inputCap_; }
-
   bool isClockBuffer() const { return type_ == CLOCK_BUFFER; }
+  double getInsertionDelay() const { return insertionDelay_; }
+  void setOutputCap(float cap) { outputCap_ = cap; }
+  float getOutputCap() const { return outputCap_; }
+  void setIdealOutputCap(float cap) { idealOutputCap_ = cap; }
+  float getIdealOutputCap() const { return idealOutputCap_; }
 
  private:
   std::string name_;
@@ -98,6 +109,9 @@ class ClockInst
   odb::dbInst* instObj_ = nullptr;
   odb::dbITerm* inputPinObj_ = nullptr;
   float inputCap_;
+  double insertionDelay_;  // insertion delay in terms of length, not time
+  float outputCap_;        // current load cap seen by this instance
+  float idealOutputCap_;   // ideal load cap needed for perfectly balanced tree
 };
 
 //-----------------------------------------------------------------------------
@@ -176,12 +190,7 @@ class Clock
         const std::string& clockPin,
         const std::string& sdcClockName,
         int clockPinX,
-        int clockPinY)
-      : netName_(netName),
-        clockPin_(clockPin),
-        sdcClockName_(sdcClockName),
-        clockPinX_(clockPinX),
-        clockPinY_(clockPinY){};
+        int clockPinY);
 
   ClockInst& addClockBuffer(const std::string& name,
                             const std::string& master,
@@ -221,6 +230,16 @@ class Clock
                float inputCap)
   {
     sinks_.emplace_back(name, "", CLOCK_SINK, x, y, pinObj, inputCap);
+  }
+
+  void addSink(const std::string& name,
+               int x,
+               int y,
+               odb::dbITerm* pinObj,
+               float inputCap,
+               float insDelay)
+  {
+    sinks_.emplace_back(name, "", CLOCK_SINK, x, y, pinObj, inputCap, insDelay);
   }
 
   std::string getName() const { return netName_; }

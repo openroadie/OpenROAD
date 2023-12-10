@@ -19,7 +19,6 @@ add_library(db
     dbMTerm.cpp 
     dbMaster.cpp 
     dbNet.cpp 
-    dbSearch.cpp
     dbTech.cpp  
     dbTechLayerSpacingRule.cpp 
     dbTechLayerAntennaRule.cpp 
@@ -63,7 +62,6 @@ add_library(db
     dbJournal.cpp 
     dbJournalLog.cpp 
     dbBlockCallBackObj.cpp 
-    dbRtTree.cpp 
     dbRegion.cpp 
     dbRegionInstItr.cpp 
     dbExtControl.cpp 
@@ -95,6 +93,7 @@ add_library(db
     dbGroup.cpp
     dbGuide.cpp
     dbIsolation.cpp
+    dbLevelShifter.cpp
     dbLogicPort.cpp
     dbMetalWidthViaMap.cpp
     dbModInst.cpp
@@ -113,20 +112,21 @@ add_library(db
     dbTechLayerCutSpacingTableOrthRule.cpp
     dbTechLayerEolExtensionRule.cpp
     dbTechLayerEolKeepOutRule.cpp
+    dbTechLayerForbiddenSpacingRule.cpp
     dbTechLayerKeepOutZoneRule.cpp
     dbTechLayerMinCutRule.cpp
     dbTechLayerMinStepRule.cpp
     dbTechLayerSpacingEolRule.cpp
     dbTechLayerSpacingTablePrlRule.cpp
     dbTechLayerWidthTableRule.cpp
+    dbGroupInstItr.cpp
+    dbGroupItr.cpp
+    dbGroupModInstItr.cpp
+    dbGuideItr.cpp
     dbModuleInstItr.cpp
     dbModuleModInstItr.cpp
-    dbGroupModInstItr.cpp
-    dbGroupItr.cpp
-    dbRegionGroupItr.cpp
-    dbGroupInstItr.cpp
-    dbGuideItr.cpp
     dbNetTrackItr.cpp
+    dbRegionGroupItr.cpp
     # Generator Code End cpp
 )
 
@@ -144,9 +144,6 @@ set_target_properties(db
 
 target_link_libraries(db
     PUBLIC
-        lefout
-        defout
-        tm
         zutil
         utl_lib
         ${TCL_LIBRARY}

@@ -313,6 +313,13 @@ proc remove_buffers { args } {
   rsz::remove_buffers_cmd
 }
 
+sta::define_cmd_args "balance_row_usage" {}
+
+proc balance_row_usage { args } {
+  sta::check_argc_eq0 "balance_row_usage" $args
+  rsz::balance_row_usage_cmd
+}
+
 sta::define_cmd_args "repair_design" {[-max_wire_length max_wire_length] \
                                       [-max_utilization util] \
                                       [-slew_margin slack_margin] \
@@ -500,7 +507,9 @@ proc report_floating_nets { args } {
 
   set verbose [info exists flags(-verbose)]
   set floating_nets [rsz::find_floating_nets]
+  set floating_pins [rsz::find_floating_pins]
   set floating_net_count [llength $floating_nets]
+  set floating_pin_count [llength $floating_pins]
   if { $floating_net_count > 0 } {
     utl::warn RSZ 20 "found $floating_net_count floating nets."
     if { $verbose } {
@@ -509,6 +518,17 @@ proc report_floating_nets { args } {
       }
     }
   }
+  if { $floating_pin_count > 0 } {
+    utl::warn RSZ 95 "found $floating_pin_count floating pins."
+    if { $verbose } {
+      foreach pin $floating_pins {
+        utl::report " [get_full_name $pin]"
+      }
+    }
+  }
+
+  utl::metric_int "timing__drv__floating__nets" $floating_net_count
+  utl::metric_int "timing__drv__floating__pins" $floating_pin_count
 }
 
 sta::define_cmd_args "report_long_wires" {count}

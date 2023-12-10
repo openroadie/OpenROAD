@@ -45,6 +45,7 @@ if (Qt5_FOUND AND BUILD_GUI)
   target_sources(gui
    PRIVATE
     src/layoutViewer.cpp
+    src/layoutTabs.cpp
     src/renderThread.cpp
     src/painter.cpp
     src/mainWindow.cpp
@@ -69,6 +70,7 @@ if (Qt5_FOUND AND BUILD_GUI)
     src/heatMap.cpp
     src/heatMapSetup.cpp
     src/heatMapPlacementDensity.cpp
+    src/heatMapRUDY.cpp
     src/browserWidget.cpp
     src/globalConnectDialog.cpp
     src/clockWidget.cpp
@@ -103,6 +105,10 @@ else()
   target_link_libraries(gui
     PUBLIC
       odb
+  )
+  target_include_directories(gui
+    PRIVATE
+      ${OPENROAD_HOME}/include
   )
 endif()
 

@@ -32,6 +32,8 @@
 
 #include "renderThread.h"
 
+#include <QPainterPath>
+
 #include "layoutViewer.h"
 #include "odb/dbShape.h"
 #include "odb/dbTransform.h"
@@ -142,6 +144,24 @@ void RenderThread::run()
   }
 }
 
+void RenderThread::drawRenderIndication(Painter& painter,
+                                        const odb::Rect& bounds)
+{
+  QPainter* qpainter = static_cast<GuiPainter&>(painter).getPainter();
+  const QFont initial_font = qpainter->font();
+  QFont indication_render_font = qpainter->font();
+  indication_render_font.setPointSize(16);
+
+  qpainter->setFont(indication_render_font);
+
+  std::string rendering_message = "Design loading...";
+  painter.setPen(gui::Painter::white, true);
+  painter.drawString(
+      bounds.xCenter(), bounds.yCenter(), Painter::CENTER, rendering_message);
+
+  qpainter->setFont(initial_font);
+}
+
 void RenderThread::draw(QImage& image,
                         const QRect& draw_bounds,
                         const SelectionSet& selected,
@@ -150,6 +170,9 @@ void RenderThread::draw(QImage& image,
                         qreal render_ratio,
                         const QColor& background)
 {
+  if (image.isNull()) {
+    return;
+  }
   // Prevent a paintEvent and a save_image call from interfering
   // (eg search RTree construction)
   std::lock_guard<std::mutex> lock(drawing_mutex_);
@@ -166,13 +189,24 @@ void RenderThread::draw(QImage& image,
   painter.scale(render_ratio, render_ratio);
 
   const Rect dbu_bounds = viewer_->screenToDBU(draw_bounds);
-  drawBlock(&painter, viewer_->block_, dbu_bounds, 0);
 
   GuiPainter gui_painter(&painter,
                          viewer_->options_,
                          viewer_->screenToDBU(draw_bounds),
                          viewer_->pixels_per_dbu_,
                          viewer_->block_->getDbUnitsPerMicron());
+
+  if (!is_first_render_done_ && !restart_) {
+    drawRenderIndication(gui_painter, dbu_bounds);
+    emit done(image, draw_bounds);
+    is_first_render_done_ = true;
+
+    // Erase the first render indication so it does not remain on the screen
+    // when the design is drawn for the first time
+    image.fill(background);
+  }
+
+  drawBlock(&painter, viewer_->block_, dbu_bounds, 0);
 
   // draw selected and over top level and fast painting events
   drawSelected(gui_painter, selected);
@@ -690,16 +724,13 @@ bool RenderThread::drawTextInBBox(const QColor& text_color,
     name = font_metrics.elidedText(
         name, Qt::ElideLeft, size_limit * bbox_in_px.width());
   }
-
-  painter->setPen(QPen(text_color, 0));
-  painter->setBrush(QBrush(text_color));
+  text_bounding_box = font_metrics.boundingRect(name);
 
   const QTransform initial_xfm = painter->transform();
 
   painter->translate(bbox.xMin(), bbox.yMin());
   painter->scale(scale_adjust, -scale_adjust);
   if (do_rotate) {
-    text_bounding_box = font_metrics.boundingRect(name);
     painter->rotate(90);
     painter->translate(-text_bounding_box.width(), 0);
     // account for descent of font
@@ -721,7 +752,16 @@ bool RenderThread::drawTextInBBox(const QColor& text_color,
       painter->translate(xOffset, -yOffset);
     }
   }
-  painter->drawText(0, 0, name);
+  if (center) {
+    QPainterPath path;
+    path.addText(0, 0, painter->font(), name);
+    painter->strokePath(path, QPen(Qt::black, 2));  // outline
+    painter->fillPath(path, QBrush(text_color));    // fill
+  } else {
+    painter->setPen(QPen(text_color, 0));
+    painter->setBrush(QBrush(text_color));
+    painter->drawText(0, 0, name);
+  }
 
   painter->setTransform(initial_xfm);
 
@@ -1033,7 +1073,24 @@ void RenderThread::drawBlock(QPainter* painter,
   drawBlockages(painter, block, bounds);
   debugPrint(logger_, GUI, "draw", 1, "blockages {}", inst_blockages);
 
-  dbTech* tech = block->getDataBase()->getTech();
+  dbTech* tech = block->getTech();
+  std::set<dbTech*> child_techs;
+  for (auto child : block->getChildren()) {
+    dbTech* child_tech = child->getTech();
+    if (child_tech != tech) {
+      child_techs.insert(child_tech);
+    }
+  }
+
+  for (dbTech* child_tech : child_techs) {
+    for (dbTechLayer* layer : child_tech->getLayers()) {
+      if (restart_) {
+        break;
+      }
+      drawLayer(painter, block, layer, insts, bounds, gui_painter);
+    }
+  }
+
   for (dbTechLayer* layer : tech->getLayers()) {
     if (restart_) {
       break;
@@ -1067,11 +1124,11 @@ void RenderThread::drawBlock(QPainter* painter,
   drawRegions(painter, block);
   debugPrint(logger_, GUI, "draw", 1, "regions {}", inst_regions);
 
-  utl::Timer inst_pin_markers;
-  if (viewer_->options_->arePinMarkersVisible()) {
-    drawPinMarkers(gui_painter, block, bounds);
+  utl::Timer inst_io_pins;
+  if (viewer_->options_->areIOPinsVisible()) {
+    drawIOPins(gui_painter, block, bounds);
   }
-  debugPrint(logger_, GUI, "draw", 1, "pin markers {}", inst_pin_markers);
+  debugPrint(logger_, GUI, "draw", 1, "io pins {}", inst_io_pins);
 
   utl::Timer inst_cell_grid;
   drawGCellGrid(painter, bounds);
@@ -1311,7 +1368,7 @@ void RenderThread::drawModuleView(QPainter* painter,
       continue;
     }
 
-    const auto setting = viewer_->modules_[module];
+    const auto setting = viewer_->modules_.at(module);
 
     if (!setting.visible) {
       continue;
@@ -1330,9 +1387,9 @@ void RenderThread::drawModuleView(QPainter* painter,
   }
 }
 
-void RenderThread::drawPinMarkers(Painter& painter,
-                                  odb::dbBlock* block,
-                                  const odb::Rect& bounds)
+void RenderThread::drawIOPins(Painter& painter,
+                              odb::dbBlock* block,
+                              const odb::Rect& bounds)
 {
   auto die_area = block->getDieArea();
   auto die_width = die_area.dx();
@@ -1442,6 +1499,7 @@ void RenderThread::drawPinMarkers(Painter& painter,
         if (!box) {
           continue;
         }
+
         Point pin_center((box->xMin() + box->xMax()) / 2,
                          (box->yMin() + box->yMax()) / 2);
 
@@ -1497,7 +1555,14 @@ void RenderThread::drawPinMarkers(Painter& painter,
           marker.push_back(new_pt);
         }
 
+        // draw marker to indicate signal direction
         painter.drawPolygon(marker);
+
+        if (!viewer_->isNetVisible(term->getNet())) {
+          // draw pin's geometry only when it's not
+          // already being drawn by its Net
+          painter.drawRect(box->getBox());
+        }
 
         if (draw_names) {
           Point text_anchor_pt = xfm.getOffset();

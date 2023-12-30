@@ -195,10 +195,8 @@ sta::define_cmd_args "global_route" {[-guide_file out_file] \
                                   [-congestion_report_file file_name] \
                                   [-congestion_report_iter_step steps] \
                                   [-grid_origin origin] \
-                                  [-overflow_iterations iterations] \
                                   [-critical_nets_percentage percent] \
                                   [-allow_congestion] \
-                                  [-allow_overflow] \
                                   [-verbose] \
                                   [-start_incremental] \
                                   [-end_incremental]
@@ -286,7 +284,7 @@ proc global_route { args } {
   }
 }
 
-sta::define_cmd_args "repair_antennas" { [diode_cell/diode_port] \
+sta::define_cmd_args "repair_antennas" { [diode_cell] \
                                          [-iterations iterations] \
                                          [-ratio_margin ratio_margin]}
 
@@ -339,6 +337,26 @@ proc repair_antennas { args } {
     grt::repair_antennas $diode_mterm $iterations $ratio_margin
   } else {
     utl::error GRT 45 "Run global_route before repair_antennas."
+  }
+}
+
+sta::define_cmd_args "set_nets_to_route" { net_names }
+
+proc set_nets_to_route { args } {
+  sta::parse_key_args "set_nets_to_route" args \
+                 keys {} \
+                 flags {}
+  sta::check_argc_eq1 "set_nets_to_route" $args
+  set net_names [lindex $args 0]
+  set block [ord::get_db_block]
+  if { $block == "NULL" } {
+    utl::error GRT 252 "Missing dbBlock."
+  }
+
+  foreach net [get_nets $net_names] {
+    if { $net != "NULL" } {
+      grt::add_net_to_route [sta::sta_to_db_net $net]
+    }
   }
 }
 

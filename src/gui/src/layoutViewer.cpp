@@ -57,7 +57,6 @@
 #include <tuple>
 #include <vector>
 
-#include "colorGenerator.h"
 #include "db.h"
 #include "dbDescriptors.h"
 #include "dbShape.h"
@@ -113,6 +112,10 @@ LayoutViewer::LayoutViewer(
     const SelectionSet& selected,
     const HighlightSet& highlighted,
     const std::vector<std::unique_ptr<Ruler>>& rulers,
+    const std::map<odb::dbModule*, ModuleSettings>& module_settings,
+    const std::set<odb::dbNet*>& focus_nets,
+    const std::set<odb::dbNet*>& route_guides,
+    const std::set<odb::dbNet*>& net_tracks,
     Gui* gui,
     const std::function<bool(void)>& usingDBU,
     const std::function<bool(void)>& showRulerAsEuclidian,
@@ -130,22 +133,24 @@ LayoutViewer::LayoutViewer(
       min_depth_(0),
       max_depth_(99),
       rubber_band_showing_(false),
+      is_view_dragging_(false),
       gui_(gui),
       usingDBU_(usingDBU),
       showRulerAsEuclidian_(showRulerAsEuclidian),
+      modules_(module_settings),
       building_ruler_(false),
       ruler_start_(nullptr),
       snap_edge_showing_(false),
       animate_selection_(nullptr),
+      repaint_requested_(false),
       logger_(nullptr),
       layout_context_menu_(new QMenu(tr("Layout Menu"), this)),
+      focus_nets_(focus_nets),
+      route_guides_(route_guides),
+      net_tracks_(net_tracks),
       viewer_thread_(this)
 {
   setMouseTracking(true);
-
-  QPalette palette;
-  palette.setColor(QPalette::Window, background_);
-  setPalette(palette);
 
   addMenuAndActions();
 
@@ -157,39 +162,6 @@ LayoutViewer::LayoutViewer(
   connect(&search_, &Search::newBlock, this, &LayoutViewer::setBlock);
 }
 
-void LayoutViewer::updateModuleVisibility(odb::dbModule* module, bool visible)
-{
-  modules_[module].visible = visible;
-  fullRepaint();
-}
-
-void LayoutViewer::updateModuleColor(odb::dbModule* module,
-                                     const QColor& color,
-                                     bool user_selected)
-{
-  modules_[module].color = color;
-  if (user_selected) {
-    modules_[module].user_color = color;
-  }
-  fullRepaint();
-}
-
-void LayoutViewer::populateModuleColors()
-{
-  modules_.clear();
-
-  if (block_ == nullptr) {
-    return;
-  }
-
-  ColorGenerator generator;
-
-  for (auto* module : block_->getModules()) {
-    auto color = generator.getQColor();
-    modules_[module] = {color, color, color, true};
-  }
-}
-
 void LayoutViewer::setBlock(odb::dbBlock* block)
 {
   block_ = block;
@@ -197,8 +169,6 @@ void LayoutViewer::setBlock(odb::dbBlock* block)
   if (block && cut_maximum_size_.empty()) {
     generateCutLayerMaximumSizes();
   }
-
-  populateModuleColors();
 
   updateScaleAndCentering(scroller_->maximumViewportSize());
   fit();
@@ -244,9 +214,7 @@ Rect LayoutViewer::getBounds() const
 
   Rect die = block_->getDieArea();
 
-  Rect visible(0, 0, die.xMax(), die.yMax());
-
-  bbox.merge(visible);
+  bbox.merge(die);
 
   return bbox;
 }
@@ -304,6 +272,10 @@ void LayoutViewer::updateCenter(int dx, int dy)
   // modify the center according to the dx and dy
   center_.setX(center_.x() - dx / pixels_per_dbu_);
   center_.setY(center_.y() + dy / pixels_per_dbu_);
+
+  if (!scroller_->isScrollingWithCursor()) {
+    updateCursorCoordinates();
+  }
 }
 
 void LayoutViewer::centerAt(const odb::Point& focus)
@@ -347,6 +319,24 @@ void LayoutViewer::centerAt(const odb::Point& focus)
   if (y_val != 0) {
     center_.setY(adjusted_pt.y());
   }
+}
+
+bool LayoutViewer::isCursorInsideViewport()
+{
+  QPoint mouse_pos = scroller_->mapFromGlobal(QCursor::pos());
+  QRect layout_boundaries = scroller_->viewport()->rect();
+
+  if (layout_boundaries.contains(mouse_pos)) {
+    return true;
+  }
+
+  return false;
+}
+
+void LayoutViewer::updateCursorCoordinates()
+{
+  Point mouse = screenToDBU(mapFromGlobal(QCursor::pos()));
+  emit location(mouse.x(), mouse.y());
 }
 
 void LayoutViewer::zoomIn()
@@ -594,7 +584,7 @@ std::pair<LayoutViewer::Edge, bool> LayoutViewer::searchNearestEdge(
   const int shape_limit = shapeSizeLimit();
 
   // look for edges in metal shapes
-  dbTech* tech = block_->getDataBase()->getTech();
+  dbTech* tech = block_->getTech();
   for (auto layer : tech->getLayers()) {
     if (!options_->isVisible(layer)) {
       continue;
@@ -781,7 +771,7 @@ void LayoutViewer::selectAt(odb::Rect region, std::vector<Selected>& selections)
 
   // Look for the selected object in reverse layer order
   auto& renderers = Gui::get()->renderers();
-  dbTech* tech = block_->getDataBase()->getTech();
+  dbTech* tech = block_->getTech();
 
   const int shape_limit = shapeSizeLimit();
 
@@ -1096,8 +1086,13 @@ void LayoutViewer::mousePressEvent(QMouseEvent* event)
     }
   }
 
-  rubber_band_.setTopLeft(mouse_press_pos_);
-  rubber_band_.setBottomRight(mouse_press_pos_);
+  if (event->button() == Qt::MiddleButton && !rubber_band_showing_) {
+    is_view_dragging_ = true;
+    setCursor(Qt::ClosedHandCursor);
+  } else {
+    rubber_band_.setTopLeft(mouse_press_pos_);
+    rubber_band_.setBottomRight(mouse_press_pos_);
+  }
 }
 
 void LayoutViewer::mouseMoveEvent(QMouseEvent* event)
@@ -1111,6 +1106,15 @@ void LayoutViewer::mouseMoveEvent(QMouseEvent* event)
   // emit location in microns
   Point pt_dbu = screenToDBU(mouse_move_pos_);
   emit location(pt_dbu.x(), pt_dbu.y());
+
+  if (is_view_dragging_) {
+    QPoint dragging_delta = mouse_move_pos_ - mouse_press_pos_;
+
+    scroller_->horizontalScrollBar()->setValue(
+        scroller_->horizontalScrollBar()->value() - dragging_delta.x());
+    scroller_->verticalScrollBar()->setValue(
+        scroller_->verticalScrollBar()->value() - dragging_delta.y());
+  }
 
   if (building_ruler_) {
     if (!(qGuiApp->keyboardModifiers() & Qt::ControlModifier)) {
@@ -1158,6 +1162,11 @@ void LayoutViewer::mouseReleaseEvent(QMouseEvent* event)
 {
   if (!hasDesign()) {
     return;
+  }
+
+  if (event->button() == Qt::MiddleButton) {
+    is_view_dragging_ = false;
+    unsetCursor();
   }
 
   QPoint mouse_pos = event->pos();
@@ -1222,19 +1231,23 @@ void LayoutViewer::resizeEvent(QResizeEvent* event)
 void LayoutViewer::updateScaleAndCentering(const QSize& new_size)
 {
   if (hasDesign()) {
-    const odb::Rect block_bounds = getBounds();
+    const odb::Rect bounds = getBounds();
 
     // compute new pixels_per_dbu_
-    pixels_per_dbu_
-        = computePixelsPerDBU(new_size, getPaddedRect(block_bounds));
+    pixels_per_dbu_ = computePixelsPerDBU(new_size, getPaddedRect(bounds));
 
-    // compute new centering shift
-    // the offset necessary to center the block in the viewport.
     // expand area to fill whole scroller window
     const QSize new_area = new_size.expandedTo(scroller_->size());
+
+    // Compute new centering shift - that is the offset necessary to center the
+    // block in the viewport. We need to take into account not only the
+    // dimensions (dx and dy) of the bounds but how far it is from the dbu
+    // origin
     centering_shift_
-        = QPoint((new_area.width() - block_bounds.dx() * pixels_per_dbu_) / 2,
-                 (new_area.height() + block_bounds.dy() * pixels_per_dbu_) / 2);
+        = QPoint(((new_area.width() - bounds.dx() * pixels_per_dbu_) / 2
+                  - bounds.xMin() * pixels_per_dbu_),
+                 ((new_area.height() + bounds.dy() * pixels_per_dbu_) / 2
+                  + bounds.yMin() * pixels_per_dbu_));
 
     fullRepaint();
   }
@@ -1837,7 +1850,7 @@ void LayoutViewer::showLayoutCustomMenu(QPoint pos)
   layout_context_menu_->popup(this->mapToGlobal(pos));
 }
 
-void LayoutViewer::designLoaded(dbBlock* block)
+void LayoutViewer::blockLoaded(dbBlock* block)
 {
   search_.setTopBlock(block);
 }
@@ -1884,6 +1897,7 @@ void LayoutViewer::viewportUpdated()
 
 void LayoutViewer::saveImage(const QString& filepath,
                              const Rect& region,
+                             int width_px,
                              double dbu_per_pixel)
 {
   if (!hasDesign()) {
@@ -1908,6 +1922,12 @@ void LayoutViewer::saveImage(const QString& filepath,
   }
 
   const qreal old_pixels_per_dbu = pixels_per_dbu_;
+
+  if (width_px != 0) {
+    // Adapt resolution to width entered by user
+    pixels_per_dbu_ = width_px / static_cast<double>(save_area.dx());
+  }
+
   if (dbu_per_pixel != 0) {
     pixels_per_dbu_ = 1.0 / dbu_per_pixel;
   }
@@ -1919,15 +1939,38 @@ void LayoutViewer::saveImage(const QString& filepath,
                                       screen_region.width(),
                                       screen_region.height());
 
-  const QRect bounding_rect = save_region.boundingRect();
+  QRect bounding_rect = save_region.boundingRect();
 
   // We don't use Utils::renderImage as we need to have the
   // rendering be synchronous.  We directly call the draw()
   // method ourselves.
-  const int width_px = bounding_rect.width();
-  const int height_px = bounding_rect.height();
 
-  const QSize img_size = Utils::adjustMaxImageSize(QSize(width_px, height_px));
+  const QSize initial_size
+      = QSize(bounding_rect.width(), bounding_rect.height());
+  const QSize img_size = Utils::adjustMaxImageSize(initial_size);
+
+  if (img_size != initial_size) {
+    logger_->warn(utl::GUI,
+                  94,
+                  "Resolution results in illegal size (max width/height "
+                  "is {} pixels). Saving image with dimensions = {} x {}.",
+                  Utils::MAX_IMAGE_SIZE,
+                  img_size.width(),
+                  img_size.height());
+
+    // Set resolution according to adjusted size
+    pixels_per_dbu_ = computePixelsPerDBU(img_size, save_area);
+
+    const QRectF adjuted_screen_region = dbuToScreen(save_area);
+    const QRegion adjusted_save_region
+        = QRegion(adjuted_screen_region.left(),
+                  adjuted_screen_region.top(),
+                  adjuted_screen_region.width(),
+                  adjuted_screen_region.height());
+
+    bounding_rect = adjusted_save_region.boundingRect();
+  }
+
   QImage img(img_size, QImage::Format_ARGB32_Premultiplied);
 
   const qreal render_ratio
@@ -1940,7 +1983,7 @@ void LayoutViewer::saveImage(const QString& filepath,
                       highlighted_,
                       rulers_,
                       render_ratio,
-                      background_);
+                      background());
   pixels_per_dbu_ = old_pixels_per_dbu;
 
   if (!img.save(save_filepath)) {
@@ -2139,78 +2182,6 @@ bool LayoutViewer::hasDesign() const
   return true;
 }
 
-void LayoutViewer::addFocusNet(odb::dbNet* net)
-{
-  const auto& [itr, inserted] = focus_nets_.insert(net);
-  if (inserted) {
-    emit focusNetsChanged();
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::addRouteGuides(odb::dbNet* net)
-{
-  const auto& [itr, inserted] = route_guides_.insert(net);
-  if (inserted) {
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::addNetTracks(odb::dbNet* net)
-{
-  const auto& [itr, inserted] = net_tracks_.insert(net);
-  if (inserted) {
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::removeFocusNet(odb::dbNet* net)
-{
-  if (focus_nets_.erase(net) > 0) {
-    emit focusNetsChanged();
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::removeRouteGuides(odb::dbNet* net)
-{
-  if (route_guides_.erase(net) > 0) {
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::removeNetTracks(odb::dbNet* net)
-{
-  if (net_tracks_.erase(net) > 0) {
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::clearFocusNets()
-{
-  if (!focus_nets_.empty()) {
-    focus_nets_.clear();
-    emit focusNetsChanged();
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::clearRouteGuides()
-{
-  if (!route_guides_.empty()) {
-    route_guides_.clear();
-    fullRepaint();
-  }
-}
-
-void LayoutViewer::clearNetTracks()
-{
-  if (!net_tracks_.empty()) {
-    net_tracks_.clear();
-    fullRepaint();
-  }
-}
-
 bool LayoutViewer::isNetVisible(odb::dbNet* net)
 {
   bool focus_visible = true;
@@ -2227,7 +2198,7 @@ void LayoutViewer::generateCutLayerMaximumSizes()
     return;
   }
 
-  dbTech* tech = block_->getDataBase()->getTech();
+  dbTech* tech = block_->getTech();
   if (tech == nullptr) {
     return;
   }
@@ -2347,7 +2318,7 @@ void LayoutViewer::executionPaused()
 
 ////// LayoutScroll ///////
 LayoutScroll::LayoutScroll(LayoutViewer* viewer, QWidget* parent)
-    : QScrollArea(parent), viewer_(viewer)
+    : QScrollArea(parent), viewer_(viewer), scrolling_with_cursor_(false)
 {
   setWidgetResizable(false);
   setWidget(viewer);
@@ -2389,6 +2360,41 @@ void LayoutScroll::wheelEvent(QWheelEvent* event)
   // ensure changes are processed before the next wheel event to prevent
   // zoomIn and Out from jumping around on the ScrollBars
   QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+}
+
+bool LayoutScroll::eventFilter(QObject* object, QEvent* event)
+{
+  if (event->type() == QEvent::MouseButtonPress) {
+    QMouseEvent* press_event = static_cast<QMouseEvent*>(event);
+
+    if (press_event->button() == Qt::LeftButton) {
+      if (object == this->horizontalScrollBar()
+          || object == this->verticalScrollBar()) {
+        scrolling_with_cursor_ = true;
+      }
+    }
+  }
+
+  if (event->type() == QEvent::MouseButtonRelease) {
+    QMouseEvent* release_event = static_cast<QMouseEvent*>(event);
+
+    if (release_event->button() == Qt::LeftButton && scrolling_with_cursor_) {
+      scrolling_with_cursor_ = false;
+
+      // handle the case in which a user might click on one of the
+      // scrollbars, hold the button and move the cursor away
+      if (viewer_->isCursorInsideViewport()) {
+        viewer_->updateCursorCoordinates();
+      }
+    }
+  }
+
+  return QScrollArea::eventFilter(object, event);
+}
+
+bool LayoutScroll::isScrollingWithCursor()
+{
+  return scrolling_with_cursor_;
 }
 
 }  // namespace gui

@@ -227,10 +227,20 @@ void io::Parser::setVias(odb::dbBlock* block)
                        98,
                        "Cannot find bottom layer {}.",
                        params.getBottomLayer()->getName());
-      else
+      else {
+        if (params.getBottomLayer()->getType()
+            == dbTechLayerType::MASTERSLICE) {
+          logger_->warn(DRT,
+                        190,
+                        "Via {} with MASTERSLICE layer {} will be ignored.",
+                        params.getBottomLayer()->getName(),
+                        via->getName());
+          continue;
+        }
         botLayerNum
             = tech_->name2layer.find(params.getBottomLayer()->getName())
                   ->second->getLayerNum();
+      }
 
       if (tech_->name2layer.find(params.getTopLayer()->getName())
           == tech_->name2layer.end())
@@ -238,10 +248,18 @@ void io::Parser::setVias(odb::dbBlock* block)
                        99,
                        "Cannot find top layer {}.",
                        params.getTopLayer()->getName());
-      else
+      else {
+        if (params.getTopLayer()->getType() == dbTechLayerType::MASTERSLICE) {
+          logger_->warn(DRT,
+                        191,
+                        "Via {} with MASTERSLICE layer {} will be ignored.",
+                        params.getTopLayer()->getName(),
+                        via->getName());
+          continue;
+        }
         topLayerNum = tech_->name2layer.find(params.getTopLayer()->getName())
                           ->second->getLayerNum();
-
+      }
       int xSize = params.getXCutSize();
       int ySize = params.getYCutSize();
       int xCutSpacing = params.getXCutSpacing();
@@ -732,8 +750,6 @@ void io::Parser::setNets(odb::dbBlock* block)
               nextX = beginX;
               nextY = beginY;
             }
-            prevLayer = decoder.getLayer();
-            layerName = prevLayer->getName();
             endpath = true;
           }
         } while (!endpath);
@@ -1573,13 +1589,20 @@ void io::Parser::setCutLayerProperties(odb::dbTechLayer* layer,
             "Unsupported LEF58_SPACING rule for layer {} of type SAMEMASK.",
             layer->getName());
         break;
-      case odb::dbTechLayerCutSpacingRule::CutSpacingType::PARALLELOVERLAP:
-        logger_->warn(utl::DRT,
-                      260,
-                      "Unsupported LEF58_SPACING rule for layer {} of type "
-                      "PARALLELOVERLAP.",
-                      layer->getName());
+      case odb::dbTechLayerCutSpacingRule::CutSpacingType::PARALLELOVERLAP: {
+        auto con = make_unique<frLef58CutSpacingConstraint>();
+        con->setCutSpacing(rule->getCutSpacing());
+        con->setCenterToCenter(rule->isCenterToCenter());
+        con->setSameNet(rule->isSameNet());
+        con->setSameMetal(rule->isSameMetal());
+        con->setSameVia(rule->isSameVia());
+        con->setSameCut(rule->isSameCut());
+        con->setSameMask(rule->isSameMask());
+        con->setParallelOverlap(true);
+        tmpLayer->addLef58CutSpacingConstraint(con.get());
+        tech_->addUConstraint(std::move(con));
         break;
+      }
       case odb::dbTechLayerCutSpacingRule::CutSpacingType::PARALLELWITHIN:
         logger_->warn(utl::DRT,
                       261,
@@ -2252,6 +2275,8 @@ void io::Parser::setMasters(odb::dbDatabase* db)
         }
       }
 
+      vector<gtl::polygon_90_set_data<frCoord>> layerPolys(
+          tech_->getLayers().size());
       for (auto obs : master->getObstructions()) {
         frLayerNum layerNum = -1;
         auto layer = obs->getTechLayer();
@@ -2306,21 +2331,56 @@ void io::Parser::setMasters(odb::dbDatabase* db)
             }
           }
         }
-        auto blkIn = make_unique<frBlockage>();
-        blkIn->setId(numBlockages_);
-        blkIn->setDesignRuleWidth(obs->getDesignRuleWidth());
-        numBlockages_++;
-        auto pinIn = make_unique<frBPin>();
-        pinIn->setId(0);
-        // pinFig
-        unique_ptr<frRect> pinFig = make_unique<frRect>();
-        pinFig->setBBox(Rect(xl, yl, xh, yh));
-        pinFig->addToPin(pinIn.get());
-        pinFig->setLayerNum(layerNum);
-        unique_ptr<frPinFig> uptr(std::move(pinFig));
-        pinIn->addPinFig(std::move(uptr));
-        blkIn->setPin(std::move(pinIn));
-        tmpMaster->addBlockage(std::move(blkIn));
+        if (obs->getDesignRuleWidth() == -1) {
+          gtl::rectangle_data<frCoord> rect(xl, yl, xh, yh);
+          using gtl::operators::operator+=;
+          layerPolys[layerNum] += rect;
+        } else {
+          auto blkIn = make_unique<frBlockage>();
+          blkIn->setId(numBlockages_++);
+          blkIn->setDesignRuleWidth(obs->getDesignRuleWidth());
+          auto pinIn = make_unique<frBPin>();
+          pinIn->setId(0);
+          // pinFig
+          unique_ptr<frRect> pinFig = make_unique<frRect>();
+          pinFig->setBBox(Rect(xl, yl, xh, yh));
+          pinFig->addToPin(pinIn.get());
+          pinFig->setLayerNum(layerNum);
+          unique_ptr<frPinFig> uptr(std::move(pinFig));
+          pinIn->addPinFig(std::move(uptr));
+          blkIn->setPin(std::move(pinIn));
+          tmpMaster->addBlockage(std::move(blkIn));
+        }
+      }
+      frLayerNum lNum = 0;
+      for (auto& polySet : layerPolys) {
+        vector<gtl::polygon_90_with_holes_data<frCoord>> polys;
+        polySet.get(polys);
+        for (auto& poly : polys) {
+          vector<gtl::rectangle_data<frCoord>> rects;
+          gtl::get_max_rectangles(rects, poly);
+          for (auto& rect : rects) {
+            frCoord xl = gtl::xl(rect);
+            frCoord yl = gtl::yl(rect);
+            frCoord xh = gtl::xh(rect);
+            frCoord yh = gtl::yh(rect);
+            auto blkIn = make_unique<frBlockage>();
+            blkIn->setId(numBlockages_);
+            numBlockages_++;
+            auto pinIn = make_unique<frBPin>();
+            pinIn->setId(0);
+            // pinFig
+            unique_ptr<frRect> pinFig = make_unique<frRect>();
+            pinFig->setBBox(Rect(xl, yl, xh, yh));
+            pinFig->addToPin(pinIn.get());
+            pinFig->setLayerNum(lNum);
+            unique_ptr<frPinFig> uptr(std::move(pinFig));
+            pinIn->addPinFig(std::move(uptr));
+            blkIn->setPin(std::move(pinIn));
+            tmpMaster->addBlockage(std::move(blkIn));
+          }
+        }
+        lNum++;
       }
       tmpMaster->setId(numMasters_ + 1);
       design_->addMaster(std::move(tmpMaster));
@@ -2456,6 +2516,15 @@ void io::Parser::setTechVias(odb::dbTech* db_tech)
         logger_->warn(DRT,
                       124,
                       "Via {} with unused layer {} will be ignored.",
+                      layerName,
+                      via->getName());
+        has_unknown_layer = true;
+        continue;
+      }
+      if (box->getTechLayer()->getType() == dbTechLayerType::MASTERSLICE) {
+        logger_->warn(DRT,
+                      192,
+                      "Via {} with MASTERSLICE layer {} will be ignored.",
                       layerName,
                       via->getName());
         has_unknown_layer = true;
@@ -3135,6 +3204,7 @@ void io::Writer::updateDbConn(odb::dbBlock* block,
         }
       }
       _wire_encoder.end();
+      net->setWireOrdered(false);
     }
   }
 }

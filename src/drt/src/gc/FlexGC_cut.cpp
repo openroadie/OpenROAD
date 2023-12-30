@@ -507,6 +507,9 @@ void FlexGCWorker::Impl::checKeepOutZone_main(gcRect* rect,
 
 void FlexGCWorker::Impl::checkMetalWidthViaTable_main(gcRect* rect)
 {
+  if (rect->getLayerNum() > TOP_ROUTING_LAYER) {
+    return;
+  }
   for (auto con : getTech()
                       ->getLayer(rect->getLayerNum())
                       ->getMetalWidthViaConstraints()) {
@@ -618,6 +621,11 @@ void FlexGCWorker::Impl::checkMetalWidthViaTable()
         continue;
       }
       for (auto& net : getNets()) {
+        // There is no need to check vias in nets we don't route
+        auto fr_net = net->getFrNet();
+        if (fr_net && (fr_net->isSpecial() || fr_net->getType().isSupply())) {
+          continue;
+        }
         for (auto& pin : net->getPins(i)) {
           for (auto& maxrect : pin->getMaxRectangles()) {
             checkMetalWidthViaTable_main(maxrect.get());

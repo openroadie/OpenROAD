@@ -61,8 +61,9 @@ void FastRouteCore::fixEmbeddedTrees()
   // i.e., when running overflow iterations
   if (overflow_iterations_ > 0) {
     for (int netID = 0; netID < netCount(); netID++) {
-      if (!nets_[netID]->isRouted())
+      if (!nets_[netID]->isRouted() && !nets_[netID]->isDeleted()) {
         checkAndFixEmbeddedTree(netID);
+      }
     }
   }
 }
@@ -199,10 +200,12 @@ void FastRouteCore::fixOverlappingEdge(
         if (new_route_y[k] != new_route_y[k + 1]) {
           const int min_y = std::min(new_route_y[k], new_route_y[k + 1]);
           v_edges_[min_y][new_route_x[k]].usage += edgeCost;
+          v_used_ggrid_.insert(std::make_pair(min_y, new_route_x[k]));
         }
       } else {
         const int min_x = std::min(new_route_x[k], new_route_x[k + 1]);
         h_edges_[new_route_y[k]][min_x].usage += edgeCost;
+        h_used_ggrid_.insert(std::make_pair(new_route_y[k], min_x));
       }
     }
     treeedge->route.gridsX = new_route_x;
@@ -213,7 +216,7 @@ void FastRouteCore::fixOverlappingEdge(
 
 void FastRouteCore::bendEdge(
     TreeEdge* treeedge,
-    TreeNode* treenodes,
+    std::vector<TreeNode>& treenodes,
     std::vector<short>& new_route_x,
     std::vector<short>& new_route_y,
     std::vector<std::pair<short, short>>& blocked_positions)
@@ -497,8 +500,9 @@ void FastRouteCore::convertToMazerouteNet(const int netID)
 void FastRouteCore::convertToMazeroute()
 {
   for (int netID = 0; netID < netCount(); netID++) {
-    if (!nets_[netID]->isRouted())
+    if (!nets_[netID]->isRouted() && !nets_[netID]->isDeleted()) {
       convertToMazerouteNet(netID);
+    }
   }
 
   for (int i = 0; i < y_grid_; i++) {
@@ -582,36 +586,32 @@ void FastRouteCore::updateCongestionHistory(const int upType,
   int maxlimit = 0;
 
   if (upType == 1) {
-    for (int i = 0; i < y_grid_; i++) {
-      for (int j = 0; j < x_grid_ - 1; j++) {
-        const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
+    for (const auto& [i, j] : h_used_ggrid_) {
+      const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          h_edges_[i][j].last_usage += overflow;
-          h_edges_[i][j].congCNT++;
-        } else {
-          if (!stopDEC) {
-            h_edges_[i][j].last_usage = h_edges_[i][j].last_usage * 0.9;
-          }
+      if (overflow > 0) {
+        h_edges_[i][j].last_usage += overflow;
+        h_edges_[i][j].congCNT++;
+      } else {
+        if (!stopDEC) {
+          h_edges_[i][j].last_usage = h_edges_[i][j].last_usage * 0.9;
         }
-        maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
     }
 
-    for (int i = 0; i < y_grid_ - 1; i++) {
-      for (int j = 0; j < x_grid_; j++) {
-        const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
+    for (const auto& [i, j] : v_used_ggrid_) {
+      const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          v_edges_[i][j].last_usage += overflow;
-          v_edges_[i][j].congCNT++;
-        } else {
-          if (!stopDEC) {
-            v_edges_[i][j].last_usage = v_edges_[i][j].last_usage * 0.9;
-          }
+      if (overflow > 0) {
+        v_edges_[i][j].last_usage += overflow;
+        v_edges_[i][j].congCNT++;
+      } else {
+        if (!stopDEC) {
+          v_edges_[i][j].last_usage = v_edges_[i][j].last_usage * 0.9;
         }
-        maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
     }
   } else if (upType == 2) {
     if (max_adj < ahth_) {
@@ -619,117 +619,105 @@ void FastRouteCore::updateCongestionHistory(const int upType,
     } else {
       stopDEC = false;
     }
-    for (int i = 0; i < y_grid_; i++) {
-      for (int j = 0; j < x_grid_ - 1; j++) {
-        const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
+    for (const auto& [i, j] : h_used_ggrid_) {
+      const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          h_edges_[i][j].congCNT++;
-          h_edges_[i][j].last_usage += overflow;
-        } else {
-          if (!stopDEC) {
-            h_edges_[i][j].congCNT--;
-            h_edges_[i][j].congCNT = std::max<int>(0, h_edges_[i][j].congCNT);
-            h_edges_[i][j].last_usage = h_edges_[i][j].last_usage * 0.9;
-          }
+      if (overflow > 0) {
+        h_edges_[i][j].congCNT++;
+        h_edges_[i][j].last_usage += overflow;
+      } else {
+        if (!stopDEC) {
+          h_edges_[i][j].congCNT--;
+          h_edges_[i][j].congCNT = std::max<int>(0, h_edges_[i][j].congCNT);
+          h_edges_[i][j].last_usage = h_edges_[i][j].last_usage * 0.9;
         }
-        maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
     }
 
-    for (int i = 0; i < y_grid_ - 1; i++) {
-      for (int j = 0; j < x_grid_; j++) {
-        const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
+    for (const auto& [i, j] : v_used_ggrid_) {
+      const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          v_edges_[i][j].congCNT++;
-          v_edges_[i][j].last_usage += overflow;
-        } else {
-          if (!stopDEC) {
-            v_edges_[i][j].congCNT--;
-            v_edges_[i][j].congCNT = std::max<int>(0, v_edges_[i][j].congCNT);
-            v_edges_[i][j].last_usage = v_edges_[i][j].last_usage * 0.9;
-          }
+      if (overflow > 0) {
+        v_edges_[i][j].congCNT++;
+        v_edges_[i][j].last_usage += overflow;
+      } else {
+        if (!stopDEC) {
+          v_edges_[i][j].congCNT--;
+          v_edges_[i][j].congCNT = std::max<int>(0, v_edges_[i][j].congCNT);
+          v_edges_[i][j].last_usage = v_edges_[i][j].last_usage * 0.9;
         }
-        maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
     }
 
   } else if (upType == 3) {
-    for (int i = 0; i < y_grid_; i++) {
-      for (int j = 0; j < x_grid_ - 1; j++) {
-        const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
+    for (const auto& [i, j] : h_used_ggrid_) {
+      const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          h_edges_[i][j].congCNT++;
+      if (overflow > 0) {
+        h_edges_[i][j].congCNT++;
+        h_edges_[i][j].last_usage += overflow;
+      } else {
+        if (!stopDEC) {
+          h_edges_[i][j].congCNT--;
+          h_edges_[i][j].congCNT = std::max<int>(0, h_edges_[i][j].congCNT);
           h_edges_[i][j].last_usage += overflow;
-        } else {
-          if (!stopDEC) {
-            h_edges_[i][j].congCNT--;
-            h_edges_[i][j].congCNT = std::max<int>(0, h_edges_[i][j].congCNT);
-            h_edges_[i][j].last_usage += overflow;
-            h_edges_[i][j].last_usage
-                = std::max<int>(h_edges_[i][j].last_usage, 0);
-          }
+          h_edges_[i][j].last_usage
+              = std::max<int>(h_edges_[i][j].last_usage, 0);
         }
-        maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
     }
 
-    for (int i = 0; i < y_grid_ - 1; i++) {
-      for (int j = 0; j < x_grid_; j++) {
-        const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
+    for (const auto& [i, j] : v_used_ggrid_) {
+      const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          v_edges_[i][j].congCNT++;
+      if (overflow > 0) {
+        v_edges_[i][j].congCNT++;
+        v_edges_[i][j].last_usage += overflow;
+      } else {
+        if (!stopDEC) {
+          v_edges_[i][j].congCNT--;
           v_edges_[i][j].last_usage += overflow;
-        } else {
-          if (!stopDEC) {
-            v_edges_[i][j].congCNT--;
-            v_edges_[i][j].last_usage += overflow;
-            v_edges_[i][j].last_usage
-                = std::max<int>(v_edges_[i][j].last_usage, 0);
-          }
+          v_edges_[i][j].last_usage
+              = std::max<int>(v_edges_[i][j].last_usage, 0);
         }
-        maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
     }
 
   } else if (upType == 4) {
-    for (int i = 0; i < y_grid_; i++) {
-      for (int j = 0; j < x_grid_ - 1; j++) {
-        const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
+    for (const auto& [i, j] : h_used_ggrid_) {
+      const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          h_edges_[i][j].congCNT++;
-          h_edges_[i][j].last_usage += overflow;
-        } else {
-          if (!stopDEC) {
-            h_edges_[i][j].congCNT--;
-            h_edges_[i][j].congCNT = std::max<int>(0, h_edges_[i][j].congCNT);
-            h_edges_[i][j].last_usage = h_edges_[i][j].last_usage * 0.9;
-          }
+      if (overflow > 0) {
+        h_edges_[i][j].congCNT++;
+        h_edges_[i][j].last_usage += overflow;
+      } else {
+        if (!stopDEC) {
+          h_edges_[i][j].congCNT--;
+          h_edges_[i][j].congCNT = std::max<int>(0, h_edges_[i][j].congCNT);
+          h_edges_[i][j].last_usage = h_edges_[i][j].last_usage * 0.9;
         }
-        maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, h_edges_[i][j].last_usage);
     }
 
-    for (int i = 0; i < y_grid_ - 1; i++) {
-      for (int j = 0; j < x_grid_; j++) {
-        const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
+    for (const auto& [i, j] : v_used_ggrid_) {
+      const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
 
-        if (overflow > 0) {
-          v_edges_[i][j].congCNT++;
-          v_edges_[i][j].last_usage += overflow;
-        } else {
-          if (!stopDEC) {
-            v_edges_[i][j].congCNT--;
-            v_edges_[i][j].congCNT = std::max<int>(0, v_edges_[i][j].congCNT);
-            v_edges_[i][j].last_usage = v_edges_[i][j].last_usage * 0.9;
-          }
+      if (overflow > 0) {
+        v_edges_[i][j].congCNT++;
+        v_edges_[i][j].last_usage += overflow;
+      } else {
+        if (!stopDEC) {
+          v_edges_[i][j].congCNT--;
+          v_edges_[i][j].congCNT = std::max<int>(0, v_edges_[i][j].congCNT);
+          v_edges_[i][j].last_usage = v_edges_[i][j].last_usage * 0.9;
         }
-        maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
       }
+      maxlimit = std::max<int>(maxlimit, v_edges_[i][j].last_usage);
     }
   }
 
@@ -815,7 +803,8 @@ void FastRouteCore::setupHeap(const int netID,
         if (cur < num_terminals) {  // cur node isn't a Steiner node
           continue;
         }
-        for (int i = 0; i < 3; i++) {
+        const int nbrcnt = treenodes[cur].nbr_count;
+        for (int i = 0; i < nbrcnt; i++) {
           const int nbr = treenodes[cur].nbr[i];
           const int edge = treenodes[cur].edge[i];
 
@@ -895,7 +884,8 @@ void FastRouteCore::setupHeap(const int netID,
         if (cur < num_terminals) {  // cur node isn't a Steiner node
           continue;
         }
-        for (int i = 0; i < 3; i++) {
+        const int nbrcnt = treenodes[cur].nbr_count;
+        for (int i = 0; i < nbrcnt; i++) {
           const int nbr = treenodes[cur].nbr[i];
           const int edge = treenodes[cur].edge[i];
 
@@ -950,10 +940,10 @@ void FastRouteCore::setupHeap(const int netID,
   }
 }
 
-int FastRouteCore::copyGrids(const TreeNode* treenodes,
+int FastRouteCore::copyGrids(const std::vector<TreeNode>& treenodes,
                              const int n1,
                              const int n2,
-                             const TreeEdge* treeedges,
+                             const std::vector<TreeEdge>& treeedges,
                              const int edge_n1n2,
                              std::vector<int>& gridsX_n1n2,
                              std::vector<int>& gridsY_n1n2)
@@ -965,6 +955,8 @@ int FastRouteCore::copyGrids(const TreeNode* treenodes,
   if (treeedges[edge_n1n2].n1 == n1)  // n1 is the first node of (n1, n2)
   {
     if (treeedges[edge_n1n2].route.type == RouteType::MazeRoute) {
+      gridsX_n1n2.resize(treeedges[edge_n1n2].route.routelen + 1);
+      gridsY_n1n2.resize(treeedges[edge_n1n2].route.routelen + 1);
       for (int i = 0; i <= treeedges[edge_n1n2].route.routelen; i++) {
         gridsX_n1n2[cnt] = treeedges[edge_n1n2].route.gridsX[i];
         gridsY_n1n2[cnt] = treeedges[edge_n1n2].route.gridsY[i];
@@ -973,6 +965,8 @@ int FastRouteCore::copyGrids(const TreeNode* treenodes,
     }     // MazeRoute
     else  // NoRoute
     {
+      gridsX_n1n2.resize(1);
+      gridsY_n1n2.resize(1);
       gridsX_n1n2[cnt] = n1x;
       gridsY_n1n2[cnt] = n1y;
       cnt++;
@@ -981,6 +975,8 @@ int FastRouteCore::copyGrids(const TreeNode* treenodes,
   else  // n2 is the first node of (n1, n2)
   {
     if (treeedges[edge_n1n2].route.type == RouteType::MazeRoute) {
+      gridsX_n1n2.resize(treeedges[edge_n1n2].route.routelen + 1);
+      gridsY_n1n2.resize(treeedges[edge_n1n2].route.routelen + 1);
       for (int i = treeedges[edge_n1n2].route.routelen; i >= 0; i--) {
         gridsX_n1n2[cnt] = treeedges[edge_n1n2].route.gridsX[i];
         gridsY_n1n2[cnt] = treeedges[edge_n1n2].route.gridsY[i];
@@ -989,6 +985,8 @@ int FastRouteCore::copyGrids(const TreeNode* treenodes,
     }     // MazeRoute
     else  // NoRoute
     {
+      gridsX_n1n2.resize(1);
+      gridsY_n1n2.resize(1);
       gridsX_n1n2[cnt] = n1x;
       gridsY_n1n2[cnt] = n1y;
       cnt++;
@@ -999,20 +997,20 @@ int FastRouteCore::copyGrids(const TreeNode* treenodes,
 }
 
 bool FastRouteCore::updateRouteType1(const int net_id,
-                                     const TreeNode* treenodes,
+                                     const std::vector<TreeNode>& treenodes,
                                      const int n1,
                                      const int A1,
                                      const int A2,
                                      const int E1x,
                                      const int E1y,
-                                     TreeEdge* treeedges,
+                                     std::vector<TreeEdge>& treeedges,
                                      const int edge_n1A1,
                                      const int edge_n1A2)
 {
-  std::vector<int> gridsX_n1A1(x_range_ + y_range_);
-  std::vector<int> gridsY_n1A1(x_range_ + y_range_);
-  std::vector<int> gridsX_n1A2(x_range_ + y_range_);
-  std::vector<int> gridsY_n1A2(x_range_ + y_range_);
+  std::vector<int> gridsX_n1A1;
+  std::vector<int> gridsY_n1A1;
+  std::vector<int> gridsX_n1A2;
+  std::vector<int> gridsY_n1A2;
 
   const int A1x = treenodes[A1].x;
   const int A1y = treenodes[A1].y;
@@ -1136,7 +1134,7 @@ bool FastRouteCore::updateRouteType1(const int net_id,
 }
 
 bool FastRouteCore::updateRouteType2(const int net_id,
-                                     const TreeNode* treenodes,
+                                     const std::vector<TreeNode>& treenodes,
                                      const int n1,
                                      const int A1,
                                      const int A2,
@@ -1144,17 +1142,17 @@ bool FastRouteCore::updateRouteType2(const int net_id,
                                      const int C2,
                                      const int E1x,
                                      const int E1y,
-                                     TreeEdge* treeedges,
+                                     std::vector<TreeEdge>& treeedges,
                                      const int edge_n1A1,
                                      const int edge_n1A2,
                                      const int edge_C1C2)
 {
-  std::vector<int> gridsX_n1A1(x_range_ + y_range_);
-  std::vector<int> gridsY_n1A1(x_range_ + y_range_);
-  std::vector<int> gridsX_n1A2(x_range_ + y_range_);
-  std::vector<int> gridsY_n1A2(x_range_ + y_range_);
-  std::vector<int> gridsX_C1C2(x_range_ + y_range_);
-  std::vector<int> gridsY_C1C2(x_range_ + y_range_);
+  std::vector<int> gridsX_n1A1;
+  std::vector<int> gridsY_n1A1;
+  std::vector<int> gridsX_n1A2;
+  std::vector<int> gridsY_n1A2;
+  std::vector<int> gridsX_C1C2;
+  std::vector<int> gridsY_C1C2;
 
   const int A1x = treenodes[A1].x;
   const int A1y = treenodes[A1].y;
@@ -1280,8 +1278,8 @@ void FastRouteCore::reInitTree(const int netID)
       treeedge->route.gridsY.clear();
     }
   }
-  sttrees_[netID].nodes.reset();
-  sttrees_[netID].edges.reset();
+  sttrees_[netID].nodes.clear();
+  sttrees_[netID].edges.clear();
 
   Tree rsmt;
   const float net_alpha = stt_builder_->getAlpha(nets_[netID]->getDbNet());
@@ -1366,7 +1364,7 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
   }
 
   if (ordering) {
-    if (update_slack_) {
+    if (critical_nets_percentage_) {
       slack_th = CalculatePartialSlack();
     }
     StNetOrder();
@@ -1385,8 +1383,9 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
   for (int nidRPC = 0; nidRPC < netCount(); nidRPC++) {
     const int netID = ordering ? tree_order_cong_[nidRPC].treeIndex : nidRPC;
 
-    if (nets_[netID]->isRouted())
+    if (nets_[netID]->isRouted() || nets_[netID]->isDeleted()) {
       continue;
+    }
 
     const int num_terminals = sttrees_[netID].num_terminals;
 
@@ -1848,13 +1847,13 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
 
           // update route for edge (n1, A1), (n1, A2)
           bool route_ok = updateRouteType1(netID,
-                                           treenodes.get(),
+                                           treenodes,
                                            n1,
                                            A1,
                                            A2,
                                            E1x,
                                            E1y,
-                                           treeedges.get(),
+                                           treeedges,
                                            edge_n1A1,
                                            edge_n1A2);
           if (!route_ok) {
@@ -1879,7 +1878,7 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
 
           // update route for edge (n1, C1), (n1, C2) and (A1, A2)
           bool route_ok = updateRouteType2(netID,
-                                           treenodes.get(),
+                                           treenodes,
                                            n1,
                                            A1,
                                            A2,
@@ -1887,7 +1886,7 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
                                            C2,
                                            E1x,
                                            E1y,
-                                           treeedges.get(),
+                                           treeedges,
                                            edge_n1A1,
                                            edge_n1A2,
                                            edge_C1C2);
@@ -1999,13 +1998,13 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
 
           // update route for edge (n2, B1), (n2, B2)
           bool route_ok = updateRouteType1(netID,
-                                           treenodes.get(),
+                                           treenodes,
                                            n2,
                                            B1,
                                            B2,
                                            E2x,
                                            E2y,
-                                           treeedges.get(),
+                                           treeedges,
                                            edge_n2B1,
                                            edge_n2B2);
           if (!route_ok) {
@@ -2031,7 +2030,7 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
 
           // update route for edge (n2, D1), (n2, D2) and (B1, B2)
           bool route_ok = updateRouteType2(netID,
-                                           treenodes.get(),
+                                           treenodes,
                                            n2,
                                            B1,
                                            B2,
@@ -2039,7 +2038,7 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
                                            D2,
                                            E2x,
                                            E2y,
-                                           treeedges.get(),
+                                           treeedges,
                                            edge_n2B1,
                                            edge_n2B2,
                                            edge_D1D2);
@@ -2134,10 +2133,12 @@ void FastRouteCore::mazeRouteMSMD(const int iter,
         {
           const int min_y = std::min(gridsY[i], gridsY[i + 1]);
           v_edges_[min_y][gridsX[i]].usage += edgeCost;
+          v_used_ggrid_.insert(std::make_pair(min_y, gridsX[i]));
         } else  /// if(gridsY[i]==gridsY[i+1])// a horizontal edge
         {
           const int min_x = std::min(gridsX[i], gridsX[i + 1]);
           h_edges_[gridsY[i]][min_x].usage += edgeCost;
+          h_used_ggrid_.insert(std::make_pair(gridsY[i], min_x));
         }
       }
     }  // loop edgeID
@@ -2152,7 +2153,7 @@ void FastRouteCore::findCongestedEdgesNets(
     bool vertical)
 {
   for (int netID = 0; netID < netCount(); netID++) {
-    if (!nets_[netID]->isRouted()) {
+    if (nets_[netID]->isDeleted()) {
       continue;
     }
 
@@ -2261,8 +2262,9 @@ void FastRouteCore::setCongestionNets(std::set<odb::dbNet*>& congestion_nets,
 {
   // get Nets with overflow
   for (int netID = 0; netID < netCount(); netID++) {
-    if (congestion_nets.find(nets_[netID]->getDbNet())
-        != congestion_nets.end()) {
+    if ((congestion_nets.find(nets_[netID]->getDbNet())
+         != congestion_nets.end())
+        || nets_[netID]->isDeleted()) {
       continue;
     }
 
@@ -2304,27 +2306,23 @@ void FastRouteCore::getCongestionNets(std::set<odb::dbNet*>& congestion_nets)
   std::vector<int> xs, ys, dirs;
   int n = 0;
   // Find horizontal ggrids with congestion
-  for (int i = 0; i < y_grid_; i++) {
-    for (int j = 0; j < x_grid_ - 1; j++) {
-      const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
-      if (overflow > 0) {
-        xs.push_back(j);
-        ys.push_back(i);
-        dirs.push_back(1);
-        n++;
-      }
+  for (const auto& [i, j] : h_used_ggrid_) {
+    const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
+    if (overflow > 0) {
+      xs.push_back(j);
+      ys.push_back(i);
+      dirs.push_back(1);
+      n++;
     }
   }
   // Find vertical ggrids with congestion
-  for (int i = 0; i < y_grid_ - 1; i++) {
-    for (int j = 0; j < x_grid_; j++) {
-      const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
-      if (overflow > 0) {
-        xs.push_back(j);
-        ys.push_back(i);
-        dirs.push_back(0);
-        n++;
-      }
+  for (const auto& [i, j] : v_used_ggrid_) {
+    const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
+    if (overflow > 0) {
+      xs.push_back(j);
+      ys.push_back(i);
+      dirs.push_back(0);
+      n++;
     }
   }
 
@@ -2353,27 +2351,23 @@ int FastRouteCore::getOverflow2Dmaze(int* maxOverflow, int* tUsage)
   check2DEdgesUsage();
 
   int total_usage = 0;
-  for (int i = 0; i < y_grid_; i++) {
-    for (int j = 0; j < x_grid_ - 1; j++) {
-      total_usage += h_edges_[i][j].usage;
-      const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
-      if (overflow > 0) {
-        H_overflow += overflow;
-        max_H_overflow = std::max(max_H_overflow, overflow);
-        numedges++;
-      }
+  for (const auto& [i, j] : h_used_ggrid_) {
+    total_usage += h_edges_[i][j].usage;
+    const int overflow = h_edges_[i][j].usage - h_edges_[i][j].cap;
+    if (overflow > 0) {
+      H_overflow += overflow;
+      max_H_overflow = std::max(max_H_overflow, overflow);
+      numedges++;
     }
   }
 
-  for (int i = 0; i < y_grid_ - 1; i++) {
-    for (int j = 0; j < x_grid_; j++) {
-      total_usage += v_edges_[i][j].usage;
-      const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
-      if (overflow > 0) {
-        V_overflow += overflow;
-        max_V_overflow = std::max(max_V_overflow, overflow);
-        numedges++;
-      }
+  for (const auto& [i, j] : v_used_ggrid_) {
+    total_usage += v_edges_[i][j].usage;
+    const int overflow = v_edges_[i][j].usage - v_edges_[i][j].cap;
+    if (overflow > 0) {
+      V_overflow += overflow;
+      max_V_overflow = std::max(max_V_overflow, overflow);
+      numedges++;
     }
   }
 
@@ -2420,29 +2414,25 @@ int FastRouteCore::getOverflow2D(int* maxOverflow)
 
   int total_usage = 0;
 
-  for (int i = 0; i < y_grid_; i++) {
-    for (int j = 0; j < x_grid_ - 1; j++) {
-      total_usage += h_edges_[i][j].est_usage;
-      const int overflow = h_edges_[i][j].est_usage - h_edges_[i][j].cap;
-      hCap += h_edges_[i][j].cap;
-      if (overflow > 0) {
-        H_overflow += overflow;
-        max_H_overflow = std::max(max_H_overflow, overflow);
-        numedges++;
-      }
+  for (const auto& [i, j] : h_used_ggrid_) {
+    total_usage += h_edges_[i][j].est_usage;
+    const int overflow = h_edges_[i][j].est_usage - h_edges_[i][j].cap;
+    hCap += h_edges_[i][j].cap;
+    if (overflow > 0) {
+      H_overflow += overflow;
+      max_H_overflow = std::max(max_H_overflow, overflow);
+      numedges++;
     }
   }
 
-  for (int i = 0; i < y_grid_ - 1; i++) {
-    for (int j = 0; j < x_grid_; j++) {
-      total_usage += v_edges_[i][j].est_usage;
-      const int overflow = v_edges_[i][j].est_usage - v_edges_[i][j].cap;
-      vCap += v_edges_[i][j].cap;
-      if (overflow > 0) {
-        V_overflow += overflow;
-        max_V_overflow = std::max(max_V_overflow, overflow);
-        numedges++;
-      }
+  for (const auto& [i, j] : v_used_ggrid_) {
+    total_usage += v_edges_[i][j].est_usage;
+    const int overflow = v_edges_[i][j].est_usage - v_edges_[i][j].cap;
+    vCap += v_edges_[i][j].cap;
+    if (overflow > 0) {
+      V_overflow += overflow;
+      max_V_overflow = std::max(max_V_overflow, overflow);
+      numedges++;
     }
   }
 
@@ -2593,6 +2583,9 @@ void FastRouteCore::InitLastUsage(const int upType)
 void FastRouteCore::SaveLastRouteLen()
 {
   for (int netID = 0; netID < netCount(); netID++) {
+    if (nets_[netID]->isDeleted()) {
+      continue;
+    }
     auto& treeedges = sttrees_[netID].edges;
     // loop for all the tree edges
     const int num_edges = sttrees_[netID].num_edges();
